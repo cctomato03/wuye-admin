@@ -27,6 +27,26 @@
           <ElOption :value="5" label="自定义部门" />
         </ElSelect>
       </ElFormItem>
+      <ElFormItem label="可管理小区">
+        <div class="flex w-full flex-wrap items-center gap-2">
+          <ElRadioGroup v-model="form.communityScope" size="small">
+            <ElRadioButton :value="1">本物业公司全部小区</ElRadioButton>
+            <ElRadioButton :value="2">指定小区</ElRadioButton>
+          </ElRadioGroup>
+          <ElSelect
+            v-if="form.communityScope === 2"
+            v-model="form.communityIds"
+            multiple
+            filterable
+            collapse-tags
+            placeholder="选择可管理的小区"
+            class="!w-64"
+          >
+            <ElOption v-for="c in communityOptions" :key="c.id" :label="c.name" :value="c.id" />
+          </ElSelect>
+        </div>
+      </ElFormItem>
+
       <ElFormItem label="排序">
         <ElInputNumber v-model="form.sort" :min="0" :max="9999" controls-position="right" />
       </ElFormItem>
@@ -57,7 +77,7 @@
 
 <script setup lang="ts">
   import type { FormInstance, FormRules } from 'element-plus'
-  import { fetchCreateRole, fetchUpdateRole } from '@/api/system-manage'
+  import { fetchCreateRole, fetchUpdateRole, fetchRoleCommunityOptions, fetchGetRoleGranted } from '@/api/system-manage'
 
   type RoleListItem = Api.SystemManage.RoleListItem
 
@@ -89,10 +109,13 @@
     name: '',
     code: '',
     dataScope: 4,
+    communityScope: 1,
+    communityIds: [] as string[],
     sort: 0,
     status: 1,
     remark: ''
   })
+  const communityOptions = ref<Array<{ id: string; name: string }>>([])
 
   const rules = reactive<FormRules>({
     name: [
@@ -111,7 +134,16 @@
     (val) => {
       if (!val) return
       formRef.value?.clearValidate()
+      fetchRoleCommunityOptions()
+        .then((list) => (communityOptions.value = (list || []) as any))
+        .catch(() => undefined)
       if (props.dialogType === 'edit' && props.roleData) {
+        fetchGetRoleGranted(props.roleData.roleId)
+          .then((g: any) => {
+            form.communityScope = g?.communityScope ?? 1
+            form.communityIds = (g?.communityIds || []).map(String)
+          })
+          .catch(() => undefined)
         form.name = props.roleData.roleName
         form.code = props.roleData.roleCode
         form.dataScope = props.roleData.dataScope ?? 4
@@ -119,7 +151,16 @@
         form.status = props.roleData.enabled ? 1 : 2
         form.remark = props.roleData.description || ''
       } else {
-        Object.assign(form, { name: '', code: '', dataScope: 4, sort: 0, status: 1, remark: '' })
+        Object.assign(form, {
+          name: '',
+          code: '',
+          dataScope: 4,
+          communityScope: 1,
+          communityIds: [],
+          sort: 0,
+          status: 1,
+          remark: ''
+        })
       }
     }
   )
@@ -135,6 +176,8 @@
         name: form.name,
         code: form.code,
         dataScope: form.dataScope,
+        communityScope: form.communityScope,
+        communityIds: form.communityScope === 2 ? form.communityIds : [],
         sort: form.sort,
         status: form.status,
         remark: form.remark

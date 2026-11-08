@@ -223,7 +223,12 @@ export async function fetchGetRoleGranted(roleId: string | number) {
 /** 角色授权（菜单/按钮） */
 export function fetchGrantRole(
   roleId: string | number,
-  data: { menuIds: Array<string | number>; deptIds?: Array<string | number> }
+  data: {
+    menuIds: Array<string | number>
+    deptIds?: Array<string | number>
+    communityScope?: number
+    communityIds?: Array<string | number>
+  }
 ) {
   return request.put<null>({
     url: `/api/v1/system/roles/${roleId}/grant`,
@@ -248,6 +253,18 @@ export function fetchGetMenuList() {
 /** 菜单实体树（菜单管理页 CRUD 用，含按钮/接口节点） */
 export function fetchGetMenuTree() {
   return request.get<WebBasic.Menu[]>({ url: '/api/v1/system/menus/tree' })
+}
+
+/** 当前用户"可以授出"的菜单树（非超管只能看到自己已有的，防止造出更大权限的角色） */
+export function fetchAssignableMenus() {
+  return request.get<WebBasic.Menu[]>({ url: '/api/v1/system/roles/assignable-menus' })
+}
+
+/** 角色可分配的小区（受当前用户可管理小区限制） */
+export function fetchRoleCommunityOptions() {
+  return request.get<Array<{ id: string; name: string; code?: string }>>({
+    url: '/api/v1/system/roles/community-options'
+  })
 }
 
 /** 新增菜单 */

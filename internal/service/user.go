@@ -158,6 +158,22 @@ func (s *Service) GetUser(ctx context.Context, userID uint64, p *principal.Info)
 	return vo, nil
 }
 
+// assertRolesOfTenant 校验角色都属于本租户（防止把别家公司的角色挂到本公司用户上）。
+func (s *Service) assertRolesOfTenant(ctx context.Context, roleIDs []uint64, tenantID uint64) error {
+	if len(roleIDs) == 0 {
+		return nil
+	}
+	var n int64
+	if err := s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).
+		Where("tenant_id = ? AND id IN ?", tenantID, roleIDs).Count(&n).Error; err != nil {
+		return errs.ErrDB.WithErr(err)
+	}
+	if int(n) != len(roleIDs) {
+		return errs.Invalid("存在不属于当前物业公司的角色，请重新选择")
+	}
+	return nil
+}
+
 // CreateUser 新增用户。
 func (s *Service) CreateUser(ctx context.Context, req *CreateUserReq, p *principal.Info) (uint64, error) {
 	existing, err := s.Repo.FindUserByUsername(ctx, p.TenantID, req.Username)
@@ -169,6 +185,9 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserReq, p *princip
 	}
 
 	pwd := req.Password
+	if err := s.assertRolesOfTenant(ctx, req.RoleIDs.ToUint64(), p.TenantID); err != nil {
+		return 0, err
+	}
 	if pwd == "" {
 		pwd = "Aa123456" // 默认密码，建议首次登录强制修改
 	}
@@ -236,6 +255,9 @@ func (s *Service) UpdateUser(ctx context.Context, userID uint64, req *UpdateUser
 	}
 	var roleIDs, postIDs []uint64
 	if req.RoleIDs != nil {
+		if err := s.assertRolesOfTenant(ctx, req.RoleIDs.ToUint64(), p.TenantID); err != nil {
+			return err
+		}
 		roleIDs = req.RoleIDs.ToUint64()
 	}
 	if req.PostIDs != nil {
@@ -343,6 +365,9 @@ func (s *Service) AssignUserRoles(ctx context.Context, userID uint64, roleIDs []
 	}
 	if u.IsSuper && !p.IsSuper {
 		return errs.ErrCannotOperateSup
+	}
+	if err := s.assertRolesOfTenant(ctx, roleIDs, p.TenantID); err != nil {
+		return err
 	}
 	if err := s.Repo.SetUserRoles(ctx, userID, roleIDs); err != nil {
 		return errs.ErrDB.WithErr(err)

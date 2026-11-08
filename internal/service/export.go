@@ -86,7 +86,7 @@ type UserImportResult struct {
 func (s *Service) ImportUsers(ctx context.Context, r io.Reader, p *principal.Info) (*UserImportResult, error) {
 	rows, err := excel.Read(r, 2000)
 	if err != nil {
-		return nil, errs.InvalidErr(fmt.Errorf("文件解析失败：%v", err))
+		return nil, errs.Invalid("文件解析失败：请确认上传的是 .xlsx 格式的 Excel 文件")
 	}
 	if len(rows) <= 1 {
 		return nil, errs.InvalidErr(fmt.Errorf("文件没有数据行"))

@@ -17,19 +17,36 @@ const (
 	MenuTypeAPI    = 4 // 接口权限点
 )
 
+// 角色可管理小区范围
+const (
+	RoleCommunityAll      = 1 // 本物业公司全部小区（随公司新增小区自动覆盖）
+	RoleCommunityAssigned = 2 // 仅 sys_role_community 中指定的小区
+)
+
 // Role 角色表 sys_role
 type Role struct {
 	Base
-	Name      string `gorm:"column:name" json:"name"`
-	Code      string `gorm:"column:code" json:"code"`
-	Sort      int    `gorm:"column:sort" json:"sort"`
-	DataScope int    `gorm:"column:data_scope" json:"dataScope"`
-	Status    int    `gorm:"column:status" json:"status"`
-	IsBuiltin bool   `gorm:"column:is_builtin" json:"isBuiltin"`
-	TenantID  uint64 `gorm:"column:tenant_id" json:"tenantId,string"`
+	Name           string `gorm:"column:name" json:"name"`
+	Code           string `gorm:"column:code" json:"code"`
+	Sort           int    `gorm:"column:sort" json:"sort"`
+	DataScope      int    `gorm:"column:data_scope" json:"dataScope"`
+	CommunityScope int    `gorm:"column:community_scope" json:"communityScope"`
+	Status         int    `gorm:"column:status" json:"status"`
+	IsBuiltin      bool   `gorm:"column:is_builtin" json:"isBuiltin"`
+	TenantID       uint64 `gorm:"column:tenant_id" json:"tenantId,string"`
 }
 
 func (Role) TableName() string { return "sys_role" }
+
+// RoleCommunity 角色可管理的小区 sys_role_community
+type RoleCommunity struct {
+	Base
+	TenantID    uint64 `gorm:"column:tenant_id" json:"tenantId,string"`
+	RoleID      uint64 `gorm:"column:role_id" json:"roleId,string"`
+	CommunityID uint64 `gorm:"column:community_id" json:"communityId,string"`
+}
+
+func (RoleCommunity) TableName() string { return "sys_role_community" }
 
 // Menu 菜单/权限点 sys_menu（目录/菜单/按钮/接口四类合一）
 type Menu struct {

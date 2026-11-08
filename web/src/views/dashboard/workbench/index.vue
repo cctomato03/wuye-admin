@@ -1,6 +1,8 @@
 <!-- 工作台：顶部 4 张统计卡片 + 下方「待办 / 消息 / 通知」三合一表格 -->
 <template>
   <div class="workbench art-full-height">
+    <!-- 物业概览（原独立菜单已并入工作台） -->
+    <PropertyOverview />
     <!-- 欢迎条 -->
     <ElCard class="mb-3">
       <div class="flex-cb flex-wrap gap-4">
@@ -284,6 +286,8 @@
 </template>
 
 <script setup lang="ts">
+  import PropertyOverview from './modules/property-overview.vue'
+
   import { useRouter, useRoute } from 'vue-router'
   import { useUserStore } from '@/store/modules/user'
   import { fetchGetDashboardSummary } from '@/api/business'

@@ -100,6 +100,9 @@ func Run(ctx context.Context, configPath string) error {
 		return fmt.Errorf("初始化管理员失败: %w", err)
 	}
 
+	// 行政区划（省/市/区县/街道/社区）：首次启动为空时后台导入，不阻塞服务启动
+	svc.EnsureDistricts(ctx)
+
 	h := api.New(svc)
 	engine := router.New(cfg, svc, h)
 

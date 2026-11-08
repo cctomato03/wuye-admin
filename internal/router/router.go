@@ -128,6 +128,8 @@ func New(cfg *config.Config, svc *service.Service, h *api.Handler) *gin.Engine {
 		ro.PUT("/:id", middleware.Perm("system:role:update"), h.UpdateRole)
 		ro.DELETE("/:id", middleware.Perm("system:role:delete"), h.DeleteRole)
 		ro.GET("/:id/granted", middleware.Perm("system:role:list"), h.RoleGranted)
+		ro.GET("/assignable-menus", middleware.Perm("system:role:grant"), h.AssignableMenus)
+		ro.GET("/community-options", middleware.Perm("system:role:list"), h.RoleCommunityOptions)
 		ro.PUT("/:id/grant", middleware.Perm("system:role:grant"), h.GrantRole)
 
 		// 菜单
@@ -242,6 +244,168 @@ func New(cfg *config.Config, svc *service.Service, h *api.Handler) *gin.Engine {
 		j.POST("/:id/run", middleware.Perm("system:job:run"), h.RunJob)
 		j.DELETE("/:id", middleware.Perm("system:job:delete"), h.DeleteJob)
 		j.GET("/logs", middleware.Perm("system:job:list"), h.ListJobLogs)
+	}
+
+	// ---------- 物业管理（小区级数据隔离：所有接口按授权小区过滤） ----------
+	pm := authed.Group("/property")
+	{
+		// 小区
+		pm.GET("/communities", middleware.Perm("property:community:list"), h.ListCommunities)
+		pm.GET("/communities/options", h.CommunityOptions) // 下拉：登录即可读，仅返回被授权小区
+		pm.GET("/communities/:id", middleware.Perm("property:community:list"), h.GetCommunity)
+		pm.POST("/communities", middleware.Perm("property:community:create"), h.CreateCommunity)
+		pm.PUT("/communities/:id", middleware.Perm("property:community:update"), h.UpdateCommunity)
+		pm.DELETE("/communities/:id", middleware.Perm("property:community:delete"), h.DeleteCommunity)
+		pm.PUT("/communities/:id/status", middleware.Perm("property:community:status"), h.ChangeCommunityStatus)
+		pm.GET("/districts/tree", middleware.Perm("property:community:list"), h.DistrictTree)
+		pm.GET("/districts/children", middleware.Perm("property:community:list"), h.DistrictChildren)
+		pm.GET("/districts/path", middleware.Perm("property:community:list"), h.DistrictPath)
+		pm.POST("/districts/sync", middleware.Perm("property:community:update"), h.SyncDistricts)
+		pm.GET("/tenants/options", middleware.Perm("property:company:list"), h.TenantOptionsForCommunity)
+
+		// 物业公司（平台侧）
+		pm.GET("/companies", middleware.Perm("property:company:list"), h.ListCompanies)
+		pm.POST("/companies", middleware.Perm("property:company:create"), h.CreateCompany)
+		pm.PUT("/companies/:id", middleware.Perm("property:company:update"), h.UpdateCompany)
+		pm.DELETE("/companies/:id", middleware.Perm("property:company:delete"), h.DeleteCompany)
+
+		// 物业概览
+		pm.GET("/dashboard", middleware.Perm("property:dashboard:view"), h.PropertyDashboard)
+		pm.GET("/dashboard/communities", middleware.Perm("property:dashboard:view"), h.CommunityStats)
+
+		// 员工与组织架构
+		pm.GET("/employees", middleware.Perm("property:employee:list"), h.ListEmployees)
+		pm.POST("/employees", middleware.Perm("property:employee:create"), h.CreateEmployee)
+		pm.PUT("/employees/:id", middleware.Perm("property:employee:update"), h.UpdateEmployee)
+		pm.DELETE("/employees/:id", middleware.Perm("property:employee:delete"), h.DeleteEmployee)
+		pm.PUT("/employees/:id/communities", middleware.Perm("property:employee:grant"), h.GrantEmployeeCommunities)
+		pm.GET("/employees/dept-tree", middleware.Perm("property:employee:list"), h.EmployeeDeptTree)
+		pm.GET("/employees/roles", middleware.Perm("property:employee:list"), h.EmployeeRoleOptions)
+
+		// 楼宇结构
+		pm.GET("/structures/tree", middleware.Perm("property:structure:list"), h.StructureTree)
+		// 自定义层级（新模型）
+		pm.GET("/nodes/tree", middleware.Perm("property:structure:list"), h.NodeTree)
+		pm.GET("/nodes/options", middleware.Perm("property:structure:list"), h.NodeOptions)
+		pm.POST("/nodes", middleware.Perm("property:structure:create"), h.CreateNode)
+		pm.PUT("/nodes/:id", middleware.Perm("property:structure:update"), h.UpdateNode)
+		pm.DELETE("/nodes/:id", middleware.Perm("property:structure:delete"), h.DeleteNode)
+		pm.POST("/structures/regions", middleware.Perm("property:structure:create"), h.CreateRegion)
+		pm.PUT("/structures/regions/:id", middleware.Perm("property:structure:update"), h.UpdateRegion)
+		pm.DELETE("/structures/regions/:id", middleware.Perm("property:structure:delete"), h.DeleteRegion)
+		pm.POST("/structures/buildings", middleware.Perm("property:structure:create"), h.CreateBuilding)
+		pm.PUT("/structures/buildings/:id", middleware.Perm("property:structure:update"), h.UpdateBuilding)
+		pm.DELETE("/structures/buildings/:id", middleware.Perm("property:structure:delete"), h.DeleteBuilding)
+		pm.POST("/structures/units", middleware.Perm("property:structure:create"), h.CreateUnit)
+		pm.PUT("/structures/units/:id", middleware.Perm("property:structure:update"), h.UpdateUnit)
+		pm.DELETE("/structures/units/:id", middleware.Perm("property:structure:delete"), h.DeleteUnit)
+		pm.GET("/structures/houses", middleware.Perm("property:structure:list"), h.ListHouses)
+		pm.POST("/structures/houses", middleware.Perm("property:structure:create"), h.CreateHouse)
+		pm.POST("/structures/houses/batch", middleware.Perm("property:structure:create"), h.BatchCreateHouses)
+		pm.PUT("/structures/houses/:id", middleware.Perm("property:structure:update"), h.UpdateHouse)
+		pm.DELETE("/structures/houses/:id", middleware.Perm("property:structure:delete"), h.DeleteHouse)
+		pm.GET("/structures/house-types", middleware.Perm("property:structure:list"), h.ListHouseTypes)
+		pm.POST("/structures/house-types", middleware.Perm("property:structure:create"), h.CreateHouseType)
+		pm.PUT("/structures/house-types/:id", middleware.Perm("property:structure:update"), h.UpdateHouseType)
+		pm.DELETE("/structures/house-types/:id", middleware.Perm("property:structure:delete"), h.DeleteHouseType)
+		pm.GET("/structures/import-template", middleware.Perm("property:structure:import"), h.StructureImportTemplate)
+		pm.POST("/structures/import", middleware.Perm("property:structure:import"), h.ImportStructures)
+
+		// 住户
+		pm.GET("/residents", middleware.Perm("property:resident:list"), h.ListResidents)
+		pm.GET("/residents/lookup", middleware.Perm("property:resident:list"), h.LookupResident)
+		pm.GET("/residents/:id", middleware.Perm("property:resident:list"), h.GetResident)
+		pm.POST("/residents", middleware.Perm("property:resident:create"), h.CreateResident)
+		pm.PUT("/residents/:id", middleware.Perm("property:resident:update"), h.UpdateResident)
+		pm.DELETE("/residents/:id", middleware.Perm("property:resident:delete"), h.DeleteResident)
+		pm.POST("/residents/bind", middleware.Perm("property:resident:bind"), h.BindResidentHouse)
+		pm.PUT("/residents/relations/:id/unbind", middleware.Perm("property:resident:bind"), h.UnbindResidentHouse)
+		pm.PUT("/residents/relations/:id/renew", middleware.Perm("property:resident:bind"), h.RenewResidentHouse)
+		pm.PUT("/residents/relations/:id/restore", middleware.Perm("property:resident:bind"), h.RestoreResidentHouse)
+		pm.GET("/residents/:id/history", middleware.Perm("property:resident:list"), h.ListResidentHistory)
+		pm.GET("/residents/houses", middleware.Perm("property:resident:list"), h.ListHouseResidents)
+		pm.GET("/residents/:id/faces", middleware.Perm("property:resident:list"), h.ListResidentFaces)
+		pm.POST("/residents/:id/faces", middleware.Perm("property:resident:face"), h.AddResidentFace)
+		pm.DELETE("/residents/faces/:id", middleware.Perm("property:resident:face"), h.DeleteResidentFace)
+
+		// 访客
+		pm.GET("/visitors", middleware.Perm("property:visitor:list"), h.ListVisitors)
+		pm.GET("/visitors/:id", middleware.Perm("property:visitor:list"), h.GetVisitor)
+		pm.POST("/visitors", middleware.Perm("property:visitor:create"), h.CreateVisitor)
+		pm.PUT("/visitors/:id/status", middleware.Perm("property:visitor:leave"), h.ChangeVisitorStatus)
+		pm.DELETE("/visitors/:id", middleware.Perm("property:visitor:delete"), h.DeleteVisitor)
+
+		// 其他人员
+		pm.GET("/other-people", middleware.Perm("property:other:list"), h.ListOtherPeople)
+		pm.POST("/other-people", middleware.Perm("property:other:create"), h.CreateOtherPerson)
+		pm.PUT("/other-people/:id", middleware.Perm("property:other:update"), h.UpdateOtherPerson)
+		pm.DELETE("/other-people/:id", middleware.Perm("property:other:delete"), h.DeleteOtherPerson)
+		pm.GET("/person-categories", middleware.Perm("property:other:list"), h.ListPersonCategories)
+		pm.POST("/person-categories", middleware.Perm("property:other:category"), h.CreatePersonCategory)
+		pm.PUT("/person-categories/:id", middleware.Perm("property:other:category"), h.UpdatePersonCategory)
+		pm.DELETE("/person-categories/:id", middleware.Perm("property:other:category"), h.DeletePersonCategory)
+
+		// 单位/商铺
+		pm.GET("/merchants", middleware.Perm("property:merchant:list"), h.ListMerchants)
+		pm.POST("/merchants", middleware.Perm("property:merchant:create"), h.CreateMerchant)
+		pm.PUT("/merchants/:id", middleware.Perm("property:merchant:update"), h.UpdateMerchant)
+		pm.DELETE("/merchants/:id", middleware.Perm("property:merchant:delete"), h.DeleteMerchant)
+
+		// 车辆与车位
+		pm.GET("/vehicles", middleware.Perm("property:vehicle:list"), h.ListVehicles)
+		pm.POST("/vehicles", middleware.Perm("property:vehicle:create"), h.CreateVehicle)
+		pm.PUT("/vehicles/:id", middleware.Perm("property:vehicle:update"), h.UpdateVehicle)
+		pm.DELETE("/vehicles/:id", middleware.Perm("property:vehicle:delete"), h.DeleteVehicle)
+		pm.GET("/parking-spaces", middleware.Perm("property:vehicle:list"), h.ListParkingSpaces)
+		pm.POST("/parking-spaces", middleware.Perm("property:vehicle:space"), h.CreateParkingSpace)
+		pm.PUT("/parking-spaces/:id", middleware.Perm("property:vehicle:space"), h.UpdateParkingSpace)
+		pm.DELETE("/parking-spaces/:id", middleware.Perm("property:vehicle:space"), h.DeleteParkingSpace)
+		pm.GET("/vehicle-logs", middleware.Perm("property:vehicle:list"), h.ListVehicleAccessLogs)
+
+		// 设备
+		pm.GET("/devices", middleware.Perm("property:device:list"), h.ListDevices)
+		pm.GET("/devices/options", h.DeviceOptions)
+		pm.GET("/devices/summary", middleware.Perm("property:device:list"), h.DeviceSummary)
+		pm.POST("/devices", middleware.Perm("property:device:create"), h.CreateDevice)
+		pm.PUT("/devices/:id", middleware.Perm("property:device:update"), h.UpdateDevice)
+		pm.DELETE("/devices/:id", middleware.Perm("property:device:delete"), h.DeleteDevice)
+		pm.GET("/devices/import-template", middleware.Perm("property:device:import"), h.DeviceImportTemplate)
+		pm.POST("/devices/import", middleware.Perm("property:device:import"), h.ImportDevices)
+
+		// 门禁授权
+		pm.GET("/access/grants", middleware.Perm("property:access:list"), h.ListAccessGrants)
+		pm.GET("/access/stats", middleware.Perm("property:access:list"), h.AccessGrantStats)
+		pm.POST("/access/issue", middleware.Perm("property:access:issue"), h.IssuePersonAccess)
+		pm.POST("/access/retry", middleware.Perm("property:access:retry"), h.RetryAccessGrants)
+		pm.POST("/access/revoke", middleware.Perm("property:access:revoke"), h.RevokeAccessGrants)
+		pm.GET("/access/cards", middleware.Perm("property:access:list"), h.ListAccessCards)
+		pm.POST("/access/cards", middleware.Perm("property:access:card"), h.CreateAccessCard)
+		pm.DELETE("/access/cards/:id", middleware.Perm("property:access:card"), h.DeleteAccessCard)
+
+		// 收费
+		pm.GET("/fee/items", middleware.Perm("property:fee:item:list"), h.ListFeeItems)
+		pm.POST("/fee/items", middleware.Perm("property:fee:item:create"), h.CreateFeeItem)
+		pm.PUT("/fee/items/:id", middleware.Perm("property:fee:item:update"), h.UpdateFeeItem)
+		pm.DELETE("/fee/items/:id", middleware.Perm("property:fee:item:delete"), h.DeleteFeeItem)
+		pm.GET("/fee/items/:id/standards", middleware.Perm("property:fee:item:list"), h.ListFeeStandards)
+		pm.POST("/fee/standards", middleware.Perm("property:fee:item:create"), h.CreateFeeStandard)
+		pm.DELETE("/fee/standards/:id", middleware.Perm("property:fee:item:update"), h.DeleteFeeStandard)
+		pm.GET("/fee/meters", middleware.Perm("property:fee:meter:list"), h.ListMeters)
+		pm.POST("/fee/meters", middleware.Perm("property:fee:meter:create"), h.CreateMeter)
+		pm.DELETE("/fee/meters/:id", middleware.Perm("property:fee:meter:create"), h.DeleteMeter)
+		pm.GET("/fee/readings", middleware.Perm("property:fee:meter:list"), h.ListMeterReadings)
+		pm.POST("/fee/readings", middleware.Perm("property:fee:meter:reading"), h.CreateMeterReading)
+		pm.POST("/fee/bills/generate", middleware.Perm("property:fee:bill:generate"), h.GenerateBills)
+		pm.POST("/fee/bills/generate-meter", middleware.Perm("property:fee:meter:generate"), h.GenerateMeterBills)
+		pm.GET("/fee/bills", middleware.Perm("property:fee:bill:list"), h.ListBills)
+		pm.GET("/fee/bills/:id", middleware.Perm("property:fee:bill:list"), h.GetBill)
+		pm.POST("/fee/bills/:id/pay", middleware.Perm("property:fee:bill:pay"), h.PayBill)
+		pm.PUT("/fee/bills/:id/cancel", middleware.Perm("property:fee:bill:cancel"), h.CancelBill)
+		pm.GET("/fee/summary", middleware.Perm("property:fee:bill:list"), h.BillSummary)
+		pm.GET("/fee/payments", middleware.Perm("property:fee:payment:list"), h.ListPayments)
+		pm.GET("/fee/accounts", middleware.Perm("property:fee:payment:list"), h.ListAccounts)
+		pm.POST("/fee/accounts/recharge", middleware.Perm("property:fee:bill:pay"), h.RechargeAccount)
+		pm.GET("/fee/accounts/logs", middleware.Perm("property:fee:payment:list"), h.ListAccountLogs)
 	}
 
 	// ---------- 开放接口（业务系统对接：X-API-KEY，未配置时整体 404） ----------

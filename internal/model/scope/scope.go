@@ -18,6 +18,27 @@ func Tenant(tenantID uint64) func(*gorm.DB) *gorm.DB {
 	}
 }
 
+// Community 小区级数据隔离（物业业务表的强制作用域）。
+//
+//	all=true  → 不追加条件（超管 / 物业公司管理员：本租户全部小区）
+//	all=false → community_id IN (ids)；ids 为空时退化为 1=0（拒绝，绝不放开全表）
+//
+// column 为业务表的小区列名，默认 community_id。
+func Community(all bool, ids []uint64, column string) func(*gorm.DB) *gorm.DB {
+	if column == "" {
+		column = "community_id"
+	}
+	return func(db *gorm.DB) *gorm.DB {
+		if all {
+			return db
+		}
+		if len(ids) == 0 {
+			return db.Where("1 = 0")
+		}
+		return db.Where(column+" IN ?", ids)
+	}
+}
+
 // DataScope 行级数据权限，取多角色最宽范围。
 // deptColumn / userColumn 为目标表的部门列与创建人列名。
 func DataScope(p *principal.Info, deptColumn, userColumn string) func(*gorm.DB) *gorm.DB {

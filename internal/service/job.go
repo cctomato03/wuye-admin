@@ -62,6 +62,13 @@ func (s *Service) RegisterJobHandlers() {
 	JobHandlers["cleanTempFile"] = s.jobCleanTempFile
 	JobHandlers["cleanOperLog"] = s.jobCleanOperLog
 	JobHandlers["cleanLoginLog"] = s.jobCleanLoginLog
+	// 物业管理：到期人员/访客/授权自动处理 + 月度账单生成
+	JobHandlers["pmExpireResident"] = s.ResidentExpireJob
+	JobHandlers["pmExpireVisitor"] = s.VisitorExpireJob
+	JobHandlers["pmExpireOther"] = s.OtherPersonExpireJob
+	JobHandlers["pmExpireAccess"] = s.ExpireAccessGrantsJob
+	JobHandlers["pmExpireVehicle"] = s.VehicleExpireJob
+	JobHandlers["pmGenerateBill"] = s.FeeBillJob
 }
 
 // ListJobs 定时任务列表。

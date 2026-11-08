@@ -286,7 +286,7 @@ func (h *Handler) UploadFile(c *gin.Context) {
 	}
 	fh, err := c.FormFile("file")
 	if err != nil {
-		response.Fail(c, errs.InvalidErr(err))
+		response.Fail(c, errs.Invalid("请选择要上传的文件"))
 		return
 	}
 	bizType := c.PostForm("bizType")

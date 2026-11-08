@@ -2,7 +2,7 @@
   <ElDialog
     v-model="visible"
     :title="`菜单权限 - ${roleData?.roleName || ''}`"
-    width="560px"
+    width="720px"
     align-center
     class="el-dialog-border"
     destroy-on-close
@@ -15,8 +15,33 @@
       </ElSpace>
     </div>
 
-    <ElScrollbar height="60vh" v-loading="loading">
-      <ElTree
+    <ElAlert
+      class="mb-2"
+      type="info"
+      :closable="false"
+      title="只能授予自己已拥有的菜单；可管理小区也不能超出你自己的管理范围。"
+    />
+    <div class="mb-2 flex flex-wrap items-center gap-2">
+      <span class="text-sm">可管理小区</span>
+      <ElRadioGroup v-model="communityScope" size="small">
+        <ElRadioButton :value="1">本物业公司全部小区</ElRadioButton>
+        <ElRadioButton :value="2">指定小区</ElRadioButton>
+      </ElRadioGroup>
+      <ElSelect
+        v-if="communityScope === 2"
+        v-model="communityIds"
+        multiple
+        filterable
+        collapse-tags
+        collapse-tags-tooltip
+        placeholder="选择可管理的小区"
+        class="!w-72"
+      >
+        <ElOption v-for="c in communityOptions" :key="c.id" :label="c.name" :value="c.id" />
+      </ElSelect>
+    </div>
+
+    <ElScrollbar height="52vh" v-loading="loading">      <ElTree
         ref="treeRef"
         :data="menuTree"
         show-checkbox
@@ -44,7 +69,12 @@
 </template>
 
 <script setup lang="ts">
-  import { fetchGetMenuTree, fetchGetRoleGranted, fetchGrantRole } from '@/api/system-manage'
+  import {
+    fetchAssignableMenus,
+    fetchGetRoleGranted,
+    fetchGrantRole,
+    fetchRoleCommunityOptions
+  } from '@/api/system-manage'
   import { ElMessage } from 'element-plus'
   import type { ElTree } from 'element-plus'
 
@@ -76,6 +106,10 @@
   const isSelectAll = ref(false)
   const loading = ref(false)
   const saving = ref(false)
+  // 可管理小区范围（与菜单权限一起保存）
+  const communityScope = ref<number>(1)
+  const communityIds = ref<string[]>([])
+  const communityOptions = ref<Array<{ id: string; name: string }>>([])
 
   /** 收集所有节点 ID */
   const collectIds = (nodes: WebBasic.Menu[]): string[] =>
@@ -102,14 +136,20 @@
       if (!val) return
       loading.value = true
       try {
-        const [tree, granted] = await Promise.all([
-          fetchGetMenuTree(),
-          props.roleData?.roleId ? fetchGetRoleGranted(props.roleData.roleId) : Promise.resolve([])
+        const [tree, granted, commOptions] = await Promise.all([
+          fetchAssignableMenus(),
+          props.roleData?.roleId ? fetchGetRoleGranted(props.roleData.roleId) : Promise.resolve({ menuIds: [] } as any),
+          fetchRoleCommunityOptions()
         ])
         menuTree.value = tree
+        communityOptions.value = (commOptions || []) as any
+        const g: any = granted || {}
+        const grantedMenuIds: Array<string | number> = Array.isArray(g) ? g : g.menuIds || []
+        communityScope.value = g.communityScope || 1
+        communityIds.value = (g.communityIds || []).map(String)
         await nextTick()
         // 只回填叶子节点，父节点由树自动半选，避免整棵目录被误勾选
-        const grantedSet = new Set(granted.map(String))
+        const grantedSet = new Set(grantedMenuIds.map(String))
         const leafKeys = collectLeafIds(tree).filter((id) => grantedSet.has(id))
         treeRef.value?.setCheckedKeys(leafKeys, false)
         isSelectAll.value = false
@@ -149,13 +189,21 @@
 
   /** 保存授权（含半选父级目录，保证菜单可正常渲染） */
   const savePermission = async () => {
+    if (communityScope.value === 2 && !communityIds.value.length) {
+      ElMessage.warning('请选择该角色可管理的小区')
+      return
+    }
     const tree = treeRef.value
     if (!tree || !props.roleData?.roleId) return
     saving.value = true
     try {
       const menuIds = [...tree.getCheckedKeys(), ...tree.getHalfCheckedKeys()]
-      await fetchGrantRole(props.roleData.roleId, { menuIds: menuIds as string[] })
-        emit('success')
+      await fetchGrantRole(props.roleData.roleId, {
+        menuIds: menuIds as string[],
+        communityScope: communityScope.value,
+        communityIds: communityScope.value === 2 ? communityIds.value : []
+      } as any)
+      emit('success')
       visible.value = false
     } finally {
       saving.value = false

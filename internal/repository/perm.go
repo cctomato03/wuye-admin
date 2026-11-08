@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"web-basic/internal/model/entity"
+	"web-basic/pkg/id"
 )
 
 // RolesOfUser 用户拥有的角色。
@@ -135,5 +136,49 @@ func (r *Repo) UserIDsOfRole(ctx context.Context, roleID uint64) ([]uint64, erro
 	var ids []uint64
 	err := r.DB.WithContext(ctx).Model(&entity.UserRole{}).
 		Where("role_id = ?", roleID).Pluck("user_id", &ids).Error
+	return ids, err
+}
+
+// CommunityIDsOfRoles 角色被授权的"指定小区"并集（community_scope=2 时生效）。
+func (r *Repo) CommunityIDsOfRoles(ctx context.Context, roleIDs []uint64) ([]uint64, error) {
+	if len(roleIDs) == 0 {
+		return nil, nil
+	}
+	var ids []uint64
+	err := r.DB.WithContext(ctx).Model(&entity.RoleCommunity{}).
+		Where("role_id IN ?", roleIDs).Pluck("community_id", &ids).Error
+	return ids, err
+}
+
+// SetRoleCommunities 覆盖式设置角色可管理的小区。
+func (r *Repo) SetRoleCommunities(ctx context.Context, tenantID, roleID uint64, communityIDs []uint64) error {
+	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("role_id = ?", roleID).Delete(&entity.RoleCommunity{}).Error; err != nil {
+			return err
+		}
+		if len(communityIDs) == 0 {
+			return nil
+		}
+		rows := make([]entity.RoleCommunity, 0, len(communityIDs))
+		for _, cid := range communityIDs {
+			rows = append(rows, entity.RoleCommunity{
+				Base:        entity.Base{ID: id.Next()},
+				TenantID:    tenantID,
+				RoleID:      roleID,
+				CommunityID: cid,
+			})
+		}
+		return tx.Create(&rows).Error
+	})
+}
+
+// MenuIDsOfRoles 多个角色已授权的菜单 ID 并集（用于限制"子角色不能超过父角色权限"）。
+func (r *Repo) MenuIDsOfRoles(ctx context.Context, roleIDs []uint64) ([]uint64, error) {
+	if len(roleIDs) == 0 {
+		return nil, nil
+	}
+	var ids []uint64
+	err := r.DB.WithContext(ctx).Model(&entity.RoleMenu{}).
+		Where("role_id IN ?", roleIDs).Distinct().Pluck("menu_id", &ids).Error
 	return ids, err
 }

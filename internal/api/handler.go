@@ -23,9 +23,11 @@ type Handler struct {
 func New(svc *service.Service) *Handler { return &Handler{Svc: svc} }
 
 // bindJSON 解析 JSON 请求体，失败直接返回参数错误。
+// 统一走 response.BindErr：把 validator 的英文规则翻译成「字段 + 怎么改」的中文提示，
+// 绝不把 "Key: 'XxxReq.Field' Error:Field validation..." 这类原文抛给用户。
 func bindJSON(c *gin.Context, obj any) bool {
 	if err := c.ShouldBindJSON(obj); err != nil {
-		response.Fail(c, errs.InvalidErr(err))
+		response.Fail(c, response.BindErr(err))
 		return false
 	}
 	return true
@@ -35,7 +37,7 @@ func bindJSON(c *gin.Context, obj any) bool {
 func pathID(c *gin.Context) (uint64, bool) {
 	v, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || v == 0 {
-		response.Fail(c, errs.InvalidErr(err))
+		response.Fail(c, errs.Invalid("路径参数不正确（ID 必须是数字）"))
 		return 0, false
 	}
 	return v, true

@@ -7,24 +7,30 @@ const ctxKey = "principal"
 
 // Info 登录主体信息。权限集合与数据范围随缓存刷新，不在 JWT 内冗余。
 type Info struct {
-	UserID        uint64          `json:"userId,string"`
-	TenantID      uint64          `json:"tenantId,string"`
-	Username      string          `json:"username"`
-	Nickname      string          `json:"nickname"`
-	DeptID        uint64          `json:"deptId,string"`
-	DeptName      string          `json:"deptName"`
-	Avatar        string          `json:"avatar"`
-	Email         string          `json:"email"`
-	Mobile        string          `json:"mobile"`
-	Sex           int             `json:"sex"`
-	IsSuper       bool            `json:"isSuper"`
-	DataScope     int             `json:"dataScope"`
-	Roles         []string        `json:"roles"`
-	Perms         []string        `json:"perms"`
-	PermSet       map[string]bool `json:"-"`
-	DeptIDs       []uint64        `json:"-"` // 本部门及以下
-	CustomDeptIDs []uint64        `json:"-"` // 自定义数据权限部门
-	JTI           string          `json:"jti"`
+	UserID    uint64   `json:"userId,string"`
+	TenantID  uint64   `json:"tenantId,string"`
+	Username  string   `json:"username"`
+	Nickname  string   `json:"nickname"`
+	DeptID    uint64   `json:"deptId,string"`
+	DeptName  string   `json:"deptName"`
+	Avatar    string   `json:"avatar"`
+	Email     string   `json:"email"`
+	Mobile    string   `json:"mobile"`
+	Sex       int      `json:"sex"`
+	IsSuper   bool     `json:"isSuper"`
+	DataScope int      `json:"dataScope"`
+	Roles     []string `json:"roles"`
+	Perms     []string `json:"perms"`
+	// CommunityIDs 被授权的小区（物业侧数据隔离的核心依据）；CommunityAll=true 时忽略。
+	CommunityIDs []uint64 `json:"communityIds"`
+	// CommunityAll 是否可见本租户全部小区（超管 / 物业公司管理员）。
+	CommunityAll bool `json:"communityAll"`
+	// DefaultCommunityID 默认进入的小区（前端首次进入物业模块时使用）。
+	DefaultCommunityID uint64          `json:"defaultCommunityId,string"`
+	PermSet            map[string]bool `json:"-"`
+	DeptIDs            []uint64        `json:"-"` // 本部门及以下
+	CustomDeptIDs      []uint64        `json:"-"` // 自定义数据权限部门
+	JTI                string          `json:"jti"`
 }
 
 // BuildSet 构建权限集合（加载后调用）。

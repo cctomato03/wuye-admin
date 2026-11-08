@@ -59,11 +59,20 @@ func (s *Service) Login(ctx context.Context, req *LoginReq, ip, ua string) (*Tok
 	}
 
 	tenantID := req.TenantID
-	if tenantID == 0 {
-		tenantID = s.Cfg.Tenant.DefaultID
-	}
+	username := strings.TrimSpace(req.Username)
 
-	user, err := s.Repo.FindUserByUsername(ctx, tenantID, strings.TrimSpace(req.Username))
+	var user *entity.User
+	var err error
+	if tenantID == 0 {
+		// 未指定租户时按账号全局定位（sys_user.username 全局唯一）：
+		// 物业公司员工不需要知道自己的租户 ID 就能登录。
+		user, err = s.Repo.FindUserByUsernameAnyTenant(ctx, username)
+		if err == nil && user != nil {
+			tenantID = user.TenantID
+		}
+	} else {
+		user, err = s.Repo.FindUserByUsername(ctx, tenantID, username)
+	}
 	if err != nil {
 		return nil, errs.ErrDB.WithErr(err)
 	}
@@ -353,9 +362,71 @@ func (s *Service) loadPrincipal(ctx context.Context, user *entity.User) (*princi
 			p.CustomDeptIDs = ids
 		}
 	}
+	// 小区级数据授权（三层合并）：
+	//  1) 超级管理员 / 拥有「本租户全部小区」范围的角色 → CommunityAll（本租户所有小区，随新增自动覆盖）；
+	//  2) 角色的指定小区（sys_role_community）；
+	//  3) 用户直接授权（pm_user_community，兼容旧数据/临时加授权）。
+	allCommunities := user.IsSuper || hasAnyRole(roleCodes, communityAllRoles)
+	if !allCommunities {
+		for _, r := range roles {
+			if r.CommunityScope == entity.RoleCommunityAll {
+				allCommunities = true
+				break
+			}
+		}
+	}
+	roleCommunityIDs, err := s.Repo.CommunityIDsOfRoles(ctx, roleIDs)
+	if err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	directIDs, defID, err := s.loadUserCommunities(ctx, user.TenantID, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	ids := mergeIDs(roleCommunityIDs, directIDs)
+	p.CommunityAll = allCommunities
+	p.CommunityIDs = ids
+	p.DefaultCommunityID = defID
+	if p.DefaultCommunityID == 0 && len(ids) > 0 {
+		p.DefaultCommunityID = ids[0]
+	}
 	p.BuildSet()
 	_ = s.Cache.SetJSON(ctx, s.principalKey(ctx, user.ID), p, principalTTL)
 	return p, nil
+}
+
+// mergeIDs 合并两组 ID（去重，保持顺序）。
+func mergeIDs(a, b []uint64) []uint64 {
+	seen := make(map[uint64]struct{}, len(a)+len(b))
+	out := make([]uint64, 0, len(a)+len(b))
+	for _, list := range [][]uint64{a, b} {
+		for _, v := range list {
+			if v == 0 {
+				continue
+			}
+			if _, ok := seen[v]; ok {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// communityAllRoles 拥有"本租户全部小区"可见性的物业角色。
+var communityAllRoles = []string{"pm_company_admin", "super_admin"}
+
+// hasAnyRole 判断角色码集合是否命中任一目标角色。
+func hasAnyRole(roles, targets []string) bool {
+	for _, r := range roles {
+		for _, t := range targets {
+			if r == t {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // writeLoginLog 写登录日志（异步失败不影响主流程）。

@@ -33,6 +33,12 @@ func (r *Repo) FindUserByID(ctx context.Context, id uint64) (*entity.User, error
 }
 
 // FindUserByUsername 按账号查询（租户内或平台级）。
+// FindUserByUsernameAnyTenant 跨租户按账号查找（登录时未携带租户 ID 的场景）。
+// sys_user.username 有全局唯一索引，因此结果唯一。
+func (r *Repo) FindUserByUsernameAnyTenant(ctx context.Context, username string) (*entity.User, error) {
+	return r.FindUserByUsername(ctx, 0, username)
+}
+
 func (r *Repo) FindUserByUsername(ctx context.Context, tenantID uint64, username string) (*entity.User, error) {
 	var u entity.User
 	q := r.DB.WithContext(ctx).Where("username = ?", username)

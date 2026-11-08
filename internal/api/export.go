@@ -44,7 +44,7 @@ func (h *Handler) ExportUsers(c *gin.Context) {
 func (h *Handler) ImportUsers(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
-		response.Fail(c, errs.InvalidErr(err))
+		response.Fail(c, errs.Invalid("请选择要导入的 Excel 文件"))
 		return
 	}
 	if file.Size > 5<<20 {
@@ -53,7 +53,7 @@ func (h *Handler) ImportUsers(c *gin.Context) {
 	}
 	f, err := file.Open()
 	if err != nil {
-		response.Fail(c, errs.InvalidErr(err))
+		response.Fail(c, errs.Invalid("文件读取失败，请重新选择文件"))
 		return
 	}
 	defer func() { _ = f.Close() }()

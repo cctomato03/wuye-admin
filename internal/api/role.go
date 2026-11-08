@@ -87,11 +87,31 @@ func (h *Handler) GrantRole(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	if err := h.Svc.GrantRole(c.Request.Context(), id, &req); err != nil {
+	if err := h.Svc.GrantRole(c.Request.Context(), id, &req, principal.Must(c)); err != nil {
 		response.Fail(c, err)
 		return
 	}
 	response.Ok(c)
+}
+
+// AssignableMenus 当前用户可授出的菜单树（角色授权弹窗用，非超管只能看到自己已有的）。
+func (h *Handler) AssignableMenus(c *gin.Context) {
+	tree, err := h.Svc.AssignableMenuTree(c.Request.Context(), principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, tree)
+}
+
+// RoleCommunityOptions 角色可分配的小区（受当前用户管理范围限制）。
+func (h *Handler) RoleCommunityOptions(c *gin.Context) {
+	list, err := h.Svc.RoleCommunityOptions(c.Request.Context(), principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, list)
 }
 
 // RoleGranted 角色已授权信息。
