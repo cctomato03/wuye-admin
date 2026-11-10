@@ -42,13 +42,11 @@ type EmployeeVO struct {
 // ListEmployees 员工分页列表（本租户内）。
 func (s *Service) ListEmployees(ctx context.Context, q *EmployeeQuery, p *principal.Info) ([]EmployeeVO, int64, error) {
 	q.Normalize()
-	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Employee{})
-	if t := s.tenantIDOf(p); t != 0 {
-		tx = tx.Where("tenant_id = ?", t)
+	tid, err := s.OrgTenant(ctx, p, q.TenantID.Uint64())
+	if err != nil {
+		return nil, 0, err
 	}
-	if q.TenantID != 0 {
-		tx = tx.Where("tenant_id = ?", q.TenantID)
-	}
+	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Employee{}).Where("tenant_id = ?", tid)
 	if q.Keyword != "" {
 		kw := strings.TrimSpace(q.Keyword)
 		tx = tx.Where("(name LIKE ? OR phone LIKE ? OR employee_no LIKE ?)", kw+"%", kw+"%", kw+"%")
@@ -118,6 +116,7 @@ func (s *Service) ListEmployees(ctx context.Context, q *EmployeeQuery, p *princi
 
 // EmployeeReq 员工入参。
 type EmployeeReq struct {
+	TenantID    jsonx.Uint64 `json:"tenantId"`
 	EmployeeNo  string       `json:"employeeNo" binding:"max=64"`
 	Name        string       `json:"name" binding:"required,max=64"`
 	DeptID      jsonx.Uint64 `json:"deptId"`
@@ -142,10 +141,11 @@ type EmployeeReq struct {
 
 // CreateEmployee 新增员工（可选同时创建登录账号与小区授权）。
 func (s *Service) CreateEmployee(ctx context.Context, req *EmployeeReq, p *principal.Info) (uint64, error) {
-	tenantID := p.TenantID
-	if t := s.tenantIDOf(p); t != 0 {
-		tenantID = t
+	tid, err := s.OrgTenant(ctx, p, req.TenantID.Uint64())
+	if err != nil {
+		return 0, err
 	}
+	tenantID := tid
 	if req.CommunityID.Uint64() != 0 {
 		if err := s.MustCommunity(ctx, p, req.CommunityID.Uint64()); err != nil {
 			return 0, err
@@ -154,7 +154,16 @@ func (s *Service) CreateEmployee(ctx context.Context, req *EmployeeReq, p *princ
 		if err != nil {
 			return 0, err
 		}
-		tenantID = com.TenantID
+		if com.TenantID != tenantID {
+			if req.TenantID.Uint64() != 0 {
+				return 0, errs.Invalid("所选小区不属于目标物业公司")
+			}
+			// 平台管理角色未显式指定公司时，按小区所属公司落库
+			if err := s.AssertTenantAllowed(ctx, p, com.TenantID); err != nil {
+				return 0, err
+			}
+			tenantID = com.TenantID
+		}
 	}
 	entry, err := parseDate(req.EntryDate)
 	if err != nil {
@@ -386,8 +395,12 @@ func (s *Service) GrantEmployeeCommunities(ctx context.Context, empID uint64, co
 		return errs.Invalid("该员工没有登录账号，无法设置小区授权（请先为其创建账号）")
 	}
 	for _, cid := range communityIDs {
-		if err := s.MustCommunity(ctx, p, cid); err != nil {
+		com, err := s.findCommunity(ctx, p, cid)
+		if err != nil {
 			return err
+		}
+		if com.TenantID != emp.TenantID {
+			return errs.Invalid("只能把本公司的小区授权给本公司员工")
 		}
 	}
 	now := time.Now()
@@ -432,10 +445,10 @@ type EmployeeDeptNode struct {
 }
 
 // EmployeeDeptTree 物业公司组织架构树（含各部门人数）。
-func (s *Service) EmployeeDeptTree(ctx context.Context, p *principal.Info) ([]*EmployeeDeptNode, error) {
-	tenantID := p.TenantID
-	if t := s.tenantIDOf(p); t != 0 {
-		tenantID = t
+func (s *Service) EmployeeDeptTree(ctx context.Context, p *principal.Info, tenantIDArg uint64) ([]*EmployeeDeptNode, error) {
+	tenantID, err := s.OrgTenant(ctx, p, tenantIDArg)
+	if err != nil {
+		return nil, err
 	}
 	depts, err := s.Repo.ListDepts(ctx, tenantID)
 	if err != nil {
@@ -473,16 +486,13 @@ func (s *Service) EmployeeDeptTree(ctx context.Context, p *principal.Info) ([]*E
 }
 
 // RoleOptions 可分配角色下拉（本租户）。
-func (s *Service) RoleOptions(ctx context.Context, p *principal.Info) ([]OptionVO, error) {
-	tenantID := p.TenantID
-	if t := s.tenantIDOf(p); t != 0 {
-		tenantID = t
+func (s *Service) RoleOptions(ctx context.Context, p *principal.Info, tenantIDArg uint64) ([]OptionVO, error) {
+	tenantID, err := s.OrgTenant(ctx, p, tenantIDArg)
+	if err != nil {
+		return nil, err
 	}
 	var roles []entity.Role
-	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).Where("status = 1")
-	if !p.IsSuper {
-		tx = tx.Where("tenant_id = ?", tenantID)
-	}
+	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).Where("status = 1 AND tenant_id = ?", tenantID)
 	if err := tx.Order("sort ASC, id ASC").Limit(200).Find(&roles).Error; err != nil {
 		return nil, errs.ErrDB.WithErr(err)
 	}

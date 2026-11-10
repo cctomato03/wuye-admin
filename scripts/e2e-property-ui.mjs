@@ -199,7 +199,74 @@ async function main() {
     : false
   console.log('  · 临时关闭登录验证码/滑块：' + (switched ? '是' : '否（将无法自动登录，请手工关闭后重试）'))
 
-  const { proc, dir, page } = await launch()
+  /* 前置数据：确保至少有 2 家物业公司、1 个小区（空库也能独立跑） */
+async function ensureBaseData(token) {
+  const auth = { Authorization: `Bearer ${token}` }
+  const post = async (path, body) =>
+    (await fetch(BASE + path, { method: 'POST', headers: { ...jsonHeaders, ...auth }, body: JSON.stringify(body || {}) })).json()
+  const companies = await apiGet('/api/v1/property/companies?page=1&pageSize=50', token)
+  let list = companies?.data?.records || companies?.data?.list || []
+  const stamp = String(Date.now()).slice(-6)
+  while (list.length < 2) {
+    const res = await post('/api/v1/property/companies', {
+      tenantCode: `uit${stamp}${list.length}`,
+      name: `UI测试物业${stamp}${list.length}`,
+      contactPhone: '13800001111'
+    })
+    if (res.code !== 0) break
+    const again = await apiGet('/api/v1/property/companies?page=1&pageSize=50', token)
+    list = again?.data?.records || again?.data?.list || []
+  }
+  const comms = await apiGet('/api/v1/property/communities/options', token)
+  if (!(comms?.data || []).length && list.length) {
+    const tenantId = list[0].tenantId || list[0].id
+    await post('/api/v1/property/communities', {
+      tenantId,
+      code: `UIC${stamp}`,
+      name: `UI测试小区${stamp}`,
+      communityType: 1,
+      address: '自动化测试地址'
+    })
+  }
+  // 保证有层级与房屋，树/卡片断言才有数据
+  const comms2 = await apiGet('/api/v1/property/communities/options', token)
+  const communityId = (comms2?.data || [])[0]?.id
+  if (!communityId) return
+  const tree = await apiGet(`/api/v1/property/nodes/tree?communityId=${communityId}`, token)
+  let nodes = tree?.data || []
+  const ensureNode = async (parentId, name, nodeType) => {
+    const hit = nodes.find((n) => n.name === name && String(n.parentId) === String(parentId))
+    if (hit) return hit
+    const res = await post('/api/v1/property/nodes', { communityId, parentId, name, nodeType })
+    if (res.code !== 0) return null
+    const t = await apiGet(`/api/v1/property/nodes/tree?communityId=${communityId}`, token)
+    nodes = t?.data || []
+    return nodes.find((n) => n.id === String(res.data?.id)) || null
+  }
+  const building = await ensureNode(0, '1栋', 2)
+  const unit = building ? await ensureNode(building.id, '1单元', 3) : null
+  const floor = unit ? await ensureNode(unit.id, '1层', 4) : null
+  const target = floor || unit || building
+  if (target) {
+    const houses = await apiGet(`/api/v1/property/structures/houses?communityId=${communityId}&nodeId=${target.id}&page=1&pageSize=10`, token)
+    if (!(houses?.data?.list || []).length) {
+      await post('/api/v1/property/structures/houses', {
+        communityId,
+        nodeId: target.id,
+        code: `UIH${stamp}`,
+        houseNo: '101',
+        usageType: 1,
+        areaBuild: 89.5,
+        areaUse: 75,
+        houseStatus: 2
+      })
+    }
+  }
+}
+
+await ensureBaseData(adminToken)
+
+const { proc, dir, page } = await launch()
   const ws = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((res, rej) => {
     ws.addEventListener('open', res, { once: true })
@@ -271,8 +338,7 @@ async function main() {
     const pages = [
       { path: '/dashboard', expect: /工作台|物业概览|房屋总数/ },
       { path: '/setting/tenant', expect: /物业公司|小区/ },
-      { path: '/property/site/hierarchy', expect: /层级|新增层级/ },
-      { path: '/property/site/house', expect: /房屋|批量生成/ },
+      { path: '/property/site/space', expect: /基础信息|楼栋|房屋/ },
       { path: '/property/site/merchant', expect: /单位|商铺/ },
       { path: '/property/site/vehicle', expect: /车牌|车位/ },
       { path: '/property/people/resident', expect: /登记住户|房屋关系/ },
@@ -294,6 +360,67 @@ async function main() {
       const text = (await cdp.eval('document.body.innerText')) || ''
       check(`页面渲染：${item.path}`, item.expect.test(text), text.slice(0, 60).replace(/\n/g, ' '))
     }
+
+    // 组织与权限：平台管理员可见"物业公司"切换
+    await cdp.send('Page.navigate', { url: `${BASE}/#/system/user` })
+    await sleep(2800)
+    const orgText = (await cdp.eval('document.body.innerText')) || ''
+    check('用户管理页显示物业公司切换', /物业公司/.test(orgText), orgText.slice(0, 60).replace(/\n/g, '/'))
+
+    // 基础信息管理：顶部小区卡片 + 左树 + 右信息卡片
+    await cdp.send('Page.navigate', { url: `${BASE}/#/property/site/space` })
+    await sleep(3200)
+    const spaceText = (await cdp.eval('document.body.innerText')) || ''
+    check('顶部小区卡片展示小区信息', /楼栋/.test(spaceText) && /房屋/.test(spaceText) && /住户/.test(spaceText), spaceText.slice(0, 60).replace(/\n/g, '/'))
+
+    // 展开根节点 → 出现第一层
+    await cdp.eval(`(() => { const i = document.querySelector('.el-tree-node__expand-icon'); i && i.click() })()`)
+    await sleep(1200)
+    const treeRows = await cdp.eval("document.querySelectorAll('.el-tree-node').length")
+    check('左侧层级树可展开', Number(treeRows) > 1, String(treeRows))
+
+    // 点击第一个层级 → 右侧信息卡片（名称/范围/房屋总数/住户/地址/设备）
+    await cdp.eval(`(() => {
+      const children = [...document.querySelectorAll('.el-tree-node__children > .el-tree-node > .el-tree-node__content')]
+      const target = children.find((n) => n.innerText && !/房屋/.test(n.innerText)) || children[0]
+      target && target.click()
+      return !!target
+    })()`)
+    await sleep(1600)
+    const cardText = (await cdp.eval("document.querySelector('.art-table-card')?.innerText || document.body.innerText")) || ''
+    check('层级卡片显示名称/范围/房屋总数/住户人数/地址', /名称：/.test(cardText) && /范围/.test(cardText) && /房屋总数/.test(cardText) && /住户人数/.test(cardText) && /地址/.test(cardText), cardText.slice(0, 100).replace(/\n/g, '/'))
+    check('层级卡片按类型命名（不再写死"层级"）', /(楼栋|区域|单元|楼层)(名称|范围|地址)：?/.test(cardText), cardText.match(/(楼栋|区域|单元|楼层)(名称|范围|地址)/g)?.join(','))
+    check('层级卡片显示关联设备', /关联设备/.test(cardText))
+
+    // 展开层级找到房屋 → 房屋卡片含住户/车辆信息
+    // 逐层展开，直到出现房屋行
+    for (let i = 0; i < 5; i++) {
+      const hasHouse = await cdp.eval("!![...document.querySelectorAll('.el-tree-node__content')].find((n) => /房屋/.test(n.innerText))")
+      if (hasHouse) break
+      await cdp.eval(`(() => {
+        const icons = [...document.querySelectorAll('.el-tree-node__expand-icon')].filter((x) => !x.classList.contains('expanded'))
+        icons[icons.length - 1] && icons[icons.length - 1].click()
+      })()`)
+      await sleep(1200)
+    }
+    const houseClicked = await cdp.eval(`(() => {
+      const rows = [...document.querySelectorAll('.el-tree-node__content')]
+      const house = rows.find((n) => /房屋/.test(n.innerText))
+      house && house.click()
+      return !!house
+    })()`)
+    await sleep(1500)
+    const houseCardText = (await cdp.eval('document.body.innerText')) || ''
+    check('房屋卡片显示住户与车辆信息', houseClicked && /房屋名称：/.test(houseCardText) && /住户信息/.test(houseCardText) && /车辆信息/.test(houseCardText), houseCardText.slice(0, 80).replace(/\n/g, '/'))
+
+    // 新建层级弹窗：上级 + 名称 + 类型（类型来自字典），且无面积/年份/编码
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新建'); b&&b.click() })()")
+    await sleep(900)
+    const nodeDialogText = (await cdp.eval("document.querySelector('.el-dialog')?.innerText || ''")) || ''
+    check('新建层级只含上级/名称/类型', /上级层级/.test(nodeDialogText) && /层级名称/.test(nodeDialogText) && /层级类型/.test(nodeDialogText), nodeDialogText.slice(0, 80).replace(/\n/g, '/'))
+    check('新建层级不含面积/年份/结构/交付/编码', !/建筑面积|建成年份|建筑结构|交付日期|编码/.test(nodeDialogText))
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
+    await sleep(500)
 
     // 当前小区选择持久化：在 A 页面切换后，进入 B 页面应沿用同一个小区
     const readSelected = async () =>

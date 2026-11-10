@@ -445,10 +445,30 @@ async function main() {
   {
     const errs = []
     const uname = `e2e_prof_${stamp}`
+    const profileRole = await api('/api/v1/system/roles', {
+      method: 'POST',
+      token,
+      body: { name: 'E2E个人中心' + Date.now(), code: 'e2e_profile_' + Date.now(), dataScope: 4, status: 1 }
+    })
+    if (profileRole.json?.code === 0) {
+      await api(`/api/v1/system/roles/${profileRole.json.data?.id}/grant`, {
+        method: 'PUT',
+        token,
+        body: { menuIds: ['1110'] }
+      })
+    }
     const created = await api('/api/v1/system/users', {
       method: 'POST',
       token,
-      body: { username: uname, nickname: 'E2E资料', password: 'E2e@123456', deptId: '1', status: 1, roleIds: ['2'], sex: 0 }
+      body: {
+        username: uname,
+        nickname: 'E2E资料',
+        password: 'E2e@123456',
+        deptId: '1',
+        status: 1,
+        roleIds: [String(profileRole.json?.data?.id || '')],
+        sex: 0
+      }
     })
     const uid = created.json?.data?.id
     if (created.json?.code !== 0 || !uid) errs.push(`账号新增 code=${created.json?.code}`)
@@ -496,7 +516,11 @@ async function main() {
       const newPwd = reset.json?.data?.password
       if (reset.json?.code !== 0 || !newPwd) errs.push(`重置密码 code=${reset.json?.code}`)
 
-      const assign = await api(`/api/v1/system/users/${uid}/roles`, { method: 'PUT', token, body: { roleIds: ['2'] } })
+      const assign = await api(`/api/v1/system/users/${uid}/roles`, {
+        method: 'PUT',
+        token,
+        body: { roleIds: [String(profileRole.json?.data?.id || '')] }
+      })
       if (assign.json?.code !== 0) errs.push(`分配角色 code=${assign.json?.code}`)
 
       const del = await api('/api/v1/system/users', { method: 'DELETE', token, body: { ids: [String(uid)] } })
@@ -1035,10 +1059,30 @@ async function main() {
   // 4. RBAC 负向：受限账号
   const username = `e2e_rbac_${Math.random().toString(36).slice(2, 8)}`
   const password = 'E2e@123456'
+  const limitedRole = await api('/api/v1/system/roles', {
+    method: 'POST',
+    token,
+    body: { name: 'E2E受限' + Date.now(), code: 'e2e_limited_' + Date.now(), dataScope: 4, status: 1 }
+  })
+  if (limitedRole.json?.code === 0) {
+    await api(`/api/v1/system/roles/${limitedRole.json.data?.id}/grant`, {
+      method: 'PUT',
+      token,
+      body: { menuIds: ['1110'] }
+    })
+  }
   const created = await api('/api/v1/system/users', {
     method: 'POST',
     token,
-    body: { username, nickname: 'E2E受限账号', password, deptId: '1', status: 1, roleIds: ['2'], sex: 0 }
+    body: {
+      username,
+      nickname: 'E2E受限账号',
+      password,
+      deptId: '1',
+      status: 1,
+      roleIds: [String(limitedRole.json?.data?.id || '')],
+      sex: 0
+    }
   })
   const newUserId = created.json?.data?.id || created.json?.data || ''
   check('创建受限账号（普通用户角色）', created.json?.code === 0, `code=${created.json?.code} id=${newUserId}`)
@@ -1093,6 +1137,14 @@ async function main() {
   if (newUserId) {
     const del = await api('/api/v1/system/users', { method: 'DELETE', token, body: { ids: [String(newUserId)] } })
     check('清理受限测试账号', del.json?.code === 0, `code=${del.json?.code}`)
+  }
+
+  // 5.1 性能回归：在线用户列表不能用 N+1（逐条查用户表）
+  {
+    const t0 = Date.now()
+    const dash = await api('/api/v1/dashboard/summary', { token })
+    const ms = Date.now() - t0
+    check('工作台统计快速返回（在线用户批量查询）', dash.json?.code === 0 && ms < 2000, `${ms}ms code=${dash.json?.code}`)
   }
 
   // 6. 登出（注销 token）

@@ -256,24 +256,52 @@ type OnlineUser struct {
 	Nickname  string `json:"nickname"`
 }
 
+// OnlineUsers 在线用户列表（来自 Redis 集合）。
+//
+// 性能约定：**不能在循环里查用户表**。在线会话数常见几百上千，
+// 逐个 FindUserByID 会让工作台统计接口从几十毫秒退化到十几秒（360 个会话实测 17s+）。
+// 这里先解析出用户 ID 去重，再用一次 IN 批量查询回填昵称/账号。
 func (s *Service) OnlineUsers(ctx context.Context) ([]OnlineUser, error) {
 	members := s.Cache.SetMembers(ctx, keyOnline)
 	out := make([]OnlineUser, 0, len(members))
+	if len(members) == 0 {
+		return out, nil
+	}
+	uidSet := make(map[uint64]struct{}, len(members))
 	for _, m := range members {
-		parts := strings.Split(m, ":")
+		parts := strings.SplitN(m, ":", 3)
 		if len(parts) < 3 {
 			continue
 		}
 		var uid uint64
-		fmt.Sscanf(parts[0], "%d", &uid)
-		var ts int64
-		fmt.Sscanf(parts[2], "%d", &ts)
-		item := OnlineUser{UserID: uid, JTI: parts[1], LoginTime: ts}
-		if u, err := s.Repo.FindUserByID(ctx, uid); err == nil && u != nil {
-			item.Username = u.Username
-			item.Nickname = u.Nickname
+		if _, err := fmt.Sscanf(parts[0], "%d", &uid); err != nil || uid == 0 {
+			continue
 		}
-		out = append(out, item)
+		var ts int64
+		_, _ = fmt.Sscanf(parts[2], "%d", &ts)
+		out = append(out, OnlineUser{UserID: uid, JTI: parts[1], LoginTime: ts})
+		uidSet[uid] = struct{}{}
+	}
+	if len(uidSet) == 0 {
+		return out, nil
+	}
+	ids := make([]uint64, 0, len(uidSet))
+	for id := range uidSet {
+		ids = append(ids, id)
+	}
+	users, err := s.Repo.FindUsersByIDs(ctx, ids)
+	if err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	byID := make(map[uint64]entity.User, len(users))
+	for _, u := range users {
+		byID[u.ID] = u
+	}
+	for i := range out {
+		if u, ok := byID[out[i].UserID]; ok {
+			out[i].Username = u.Username
+			out[i].Nickname = u.Nickname
+		}
 	}
 	return out, nil
 }

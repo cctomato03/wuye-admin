@@ -13,6 +13,7 @@
  */
 import request from '@/utils/http'
 import type { AppRouteRecord } from '@/types/router'
+import { currentOrgTenantId } from '@/utils/org-tenant'
 
 /** 分页入参转换 */
 function toPage(params: { current?: number; size?: number } & Record<string, any> = {}) {
@@ -82,7 +83,8 @@ export async function fetchGetUserList(params: Api.SystemManage.UserSearchParams
       username: params.userName,
       mobile: params.userPhone,
       email: params.userEmail,
-      status: params.status
+      status: params.status,
+      tenantId: currentOrgTenantId() || undefined
     })
   })
   return {
@@ -103,7 +105,7 @@ export async function fetchGetUser(id: string | number) {
 export function fetchCreateUser(data: Record<string, any>) {
   return request.post<{ id: string }>({
     url: '/api/v1/system/users',
-    params: data,
+    params: { ...data, tenantId: data.tenantId || currentOrgTenantId() || undefined },
     successMessage: '新增成功',
     showSuccessMessage: true
   })
@@ -113,7 +115,7 @@ export function fetchCreateUser(data: Record<string, any>) {
 export function fetchUpdateUser(id: string | number, data: Record<string, any>) {
   return request.put<null>({
     url: `/api/v1/system/users/${id}`,
-    params: data,
+    params: { ...data, tenantId: data.tenantId || currentOrgTenantId() || undefined },
     successMessage: '保存成功',
     showSuccessMessage: true
   })
@@ -163,6 +165,7 @@ export async function fetchGetRoleList(params: Api.SystemManage.RoleSearchParams
       current: params.current,
       size: params.size,
       name: params.roleName || params.roleCode,
+      tenantId: currentOrgTenantId() || undefined,
       // enabled 兼容 1/0 与 true/false 两种取值：1/true=启用，0/false=禁用
       status:
         params.enabled === undefined || params.enabled === null ? undefined : params.enabled ? 1 : 0
@@ -186,7 +189,7 @@ export async function fetchGetAllRoles() {
 export function fetchCreateRole(data: Record<string, any>) {
   return request.post<{ id: string }>({
     url: '/api/v1/system/roles',
-    params: data,
+    params: { ...data, tenantId: data.tenantId || currentOrgTenantId() || undefined },
     successMessage: '新增成功',
     showSuccessMessage: true
   })
@@ -196,7 +199,7 @@ export function fetchCreateRole(data: Record<string, any>) {
 export function fetchUpdateRole(id: string | number, data: Record<string, any>) {
   return request.put<null>({
     url: `/api/v1/system/roles/${id}`,
-    params: data,
+    params: { ...data, tenantId: data.tenantId || currentOrgTenantId() || undefined },
     successMessage: '保存成功',
     showSuccessMessage: true
   })
@@ -261,9 +264,10 @@ export function fetchAssignableMenus() {
 }
 
 /** 角色可分配的小区（受当前用户可管理小区限制） */
-export function fetchRoleCommunityOptions() {
+export function fetchRoleCommunityOptions(tenantId?: string) {
   return request.get<Array<{ id: string; name: string; code?: string }>>({
-    url: '/api/v1/system/roles/community-options'
+    url: '/api/v1/system/roles/community-options',
+    params: { tenantId: tenantId || currentOrgTenantId() || undefined }
   })
 }
 

@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
+	"gorm.io/gorm"
 	"strings"
 	"time"
 
 	"web-basic/internal/model/entity"
-	"web-basic/internal/model/scope"
 	"web-basic/internal/principal"
 	"web-basic/internal/repository"
 	"web-basic/pkg/errs"
@@ -42,15 +42,11 @@ type RoleReq struct {
 // ListRoles 分页查询角色（本租户）。
 func (s *Service) ListRoles(ctx context.Context, q *RoleQuery, p *principal.Info) ([]entity.Role, int64, error) {
 	q.Normalize()
-	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Role{})
-	if p != nil && p.IsSuper {
-		// 平台超管：默认可看全部，支持按物业公司筛选
-		if q.TenantID.Uint64() != 0 {
-			tx = tx.Where("tenant_id = ?", q.TenantID.Uint64())
-		}
-	} else {
-		tx = tx.Scopes(scope.Tenant(p.TenantID))
+	tid, err := s.OrgTenant(ctx, p, q.TenantID.Uint64())
+	if err != nil {
+		return nil, 0, err
 	}
+	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).Where("tenant_id = ?", tid)
 	if q.Name != "" {
 		tx = tx.Where("name LIKE ? OR code LIKE ?", q.Name+"%", q.Name+"%")
 	}
@@ -69,10 +65,14 @@ func (s *Service) ListRoles(ctx context.Context, q *RoleQuery, p *principal.Info
 }
 
 // AllRoles 全部启用角色（用户分配角色下拉，仅本租户）。
-func (s *Service) AllRoles(ctx context.Context, p *principal.Info) ([]entity.Role, error) {
+func (s *Service) AllRoles(ctx context.Context, p *principal.Info, tenantID uint64) ([]entity.Role, error) {
+	tid, err := s.OrgTenant(ctx, p, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	var list []entity.Role
-	err := s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).
-		Scopes(scope.Tenant(p.TenantID)).Where("status = 1").Order("sort ASC").Find(&list).Error
+	err = s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).
+		Where("tenant_id = ? AND status = 1", tid).Order("sort ASC").Find(&list).Error
 	if err != nil {
 		return nil, errs.ErrDB.WithErr(err)
 	}
@@ -85,9 +85,9 @@ func (s *Service) AllRoles(ctx context.Context, p *principal.Info) ([]entity.Rol
 //  1. 非超管只能勾选自己已拥有的菜单（菜单授权在 GrantRole 里校验，这里先约束小区范围）；
 //  2. 指定小区必须是创建者可管理小区的子集。
 func (s *Service) CreateRole(ctx context.Context, req *RoleReq, p *principal.Info) (uint64, error) {
-	tenantID := p.TenantID
-	if p != nil && p.IsSuper && req.TenantID.Uint64() != 0 {
-		tenantID = req.TenantID.Uint64()
+	tenantID, err := s.OrgTenant(ctx, p, req.TenantID.Uint64())
+	if err != nil {
+		return 0, err
 	}
 	var n int64
 	if err := s.Repo.DB.WithContext(ctx).Model(&entity.Role{}).
@@ -316,15 +316,19 @@ func (s *Service) roleOfTenant(ctx context.Context, p *principal.Info, roleID ui
 	if role == nil {
 		return nil, errs.ErrNotFound
 	}
-	if p != nil && !p.IsSuper && p.TenantID != 0 && role.TenantID != p.TenantID {
-		return nil, errs.ErrNotFound
+	if err := s.AssertTenantAllowed(ctx, p, role.TenantID); err != nil {
+		return nil, errs.New(errs.ErrNotFound.Code, errs.ErrNotFound.Msg)
 	}
 	return role, nil
 }
 
 // canManageAllCommunities 当前用户是否具备"本租户全部小区"的管理范围。
 func (s *Service) canManageAllCommunities(p *principal.Info) bool {
-	return p != nil && (p.IsSuper || p.CommunityAll)
+	if p == nil {
+		return false
+	}
+	// 平台默认租户（系统管理角色）在「组织与权限」里切换公司时，按目标公司的全部小区处理
+	return p.IsSuper || p.CommunityAll || p.TenantID == s.DefaultTenantID()
 }
 
 // assertCommunitiesManageable 校验目标小区都在当前用户可管理范围内。
@@ -425,8 +429,18 @@ func (s *Service) AssignableMenuTree(ctx context.Context, p *principal.Info) ([]
 }
 
 // RoleCommunityOptions 角色可分配的小区下拉（受当前用户管理范围限制）。
-func (s *Service) RoleCommunityOptions(ctx context.Context, p *principal.Info) ([]OptionVO, error) {
-	tx := s.communityTableScope(ctx, p).Where("status = 1")
+func (s *Service) RoleCommunityOptions(ctx context.Context, p *principal.Info, tenantID uint64) ([]OptionVO, error) {
+	tid, err := s.OrgTenant(ctx, p, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	var tx *gorm.DB
+	if s.IsPlatformTenant(p) {
+		// 平台管理角色：按"当前切换的物业公司"列出全部小区
+		tx = s.Repo.DB.WithContext(ctx).Model(&entity.Community{}).Where("tenant_id = ? AND status = 1", tid)
+	} else {
+		tx = s.communityTableScope(ctx, p).Where("status = 1")
+	}
 	var list []entity.Community
 	if err := tx.Order("sort ASC, id ASC").Limit(5000).Find(&list).Error; err != nil {
 		return nil, errs.ErrDB.WithErr(err)

@@ -62,6 +62,13 @@ func Run(ctx context.Context, configPath string) error {
 		if err := migrate.Run(db); err != nil {
 			return fmt.Errorf("数据库迁移失败: %w", err)
 		}
+		// 迁移后幂等补齐"加列/加索引"（MySQL 8 无 ADD COLUMN IF NOT EXISTS；也用于修复执行到一半的迁移）
+		if err := EnsureSchema(db); err != nil {
+			return fmt.Errorf("数据库结构校验失败: %w", err)
+		}
+		if err := EnsureNodeAddresses(db); err != nil {
+			return fmt.Errorf("层级地址回填失败: %w", err)
+		}
 		logger.S().Info("数据库迁移完成")
 	}
 

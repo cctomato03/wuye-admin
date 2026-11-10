@@ -24,6 +24,7 @@ type DeptNode struct {
 
 // DeptReq 部门新增/修改入参。
 type DeptReq struct {
+	TenantID jsonx.Uint64 `json:"tenantId"`
 	ParentID jsonx.Uint64 `json:"parentId"`
 	Name     string       `json:"name" binding:"required,max=64"`
 	Code     string       `json:"code" binding:"max=64"`
@@ -36,8 +37,12 @@ type DeptReq struct {
 }
 
 // DeptTree 部门树。
-func (s *Service) DeptTree(ctx context.Context, p *principal.Info) ([]*DeptNode, error) {
-	list, err := s.Repo.ListDepts(ctx, p.TenantID)
+func (s *Service) DeptTree(ctx context.Context, p *principal.Info, tenantID uint64) ([]*DeptNode, error) {
+	tid, err := s.OrgTenant(ctx, p, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := s.Repo.ListDepts(ctx, tid)
 	if err != nil {
 		return nil, errs.ErrDB.WithErr(err)
 	}
@@ -66,14 +71,18 @@ func (s *Service) DeptTree(ctx context.Context, p *principal.Info) ([]*DeptNode,
 
 // CreateDept 新增部门（自动计算 ancestors 冗余路径）。
 func (s *Service) CreateDept(ctx context.Context, req *DeptReq, p *principal.Info) (uint64, error) {
+	tid, err := s.OrgTenant(ctx, p, req.TenantID.Uint64())
+	if err != nil {
+		return 0, err
+	}
 	ancestors := "0"
 	if req.ParentID > 0 {
 		parent, err := s.Repo.FindDeptByID(ctx, req.ParentID.Uint64())
 		if err != nil {
 			return 0, errs.ErrDB.WithErr(err)
 		}
-		if parent == nil {
-			return 0, errs.ErrNotFound
+		if parent == nil || parent.TenantID != tid {
+			return 0, errs.Invalid("上级部门不存在或不属于目标物业公司")
 		}
 		ancestors = fmt.Sprintf("%s,%d", parent.Ancestors, parent.ID)
 	}
@@ -96,7 +105,7 @@ func (s *Service) CreateDept(ctx context.Context, req *DeptReq, p *principal.Inf
 		Email:     req.Email,
 		Sort:      req.Sort,
 		Status:    req.Status,
-		TenantID:  p.TenantID,
+		TenantID:  tid,
 	}
 	if err := s.Repo.DB.WithContext(ctx).Create(dept).Error; err != nil {
 		return 0, errs.ErrDB.WithErr(err)
@@ -176,8 +185,11 @@ func (s *Service) DeptDetail(ctx context.Context, deptID uint64, p *principal.In
 	if err != nil {
 		return nil, errs.ErrDB.WithErr(err)
 	}
-	if d == nil || (p.TenantID != 0 && d.TenantID != p.TenantID) {
+	if d == nil {
 		return nil, errs.ErrNotFound
+	}
+	if err := s.AssertTenantAllowed(ctx, p, d.TenantID); err != nil {
+		return nil, err
 	}
 	return d, nil
 }

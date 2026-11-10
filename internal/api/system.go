@@ -14,7 +14,7 @@ import (
 // ---------------- 岗位 ----------------
 
 func (h *Handler) ListPosts(c *gin.Context) {
-	list, err := h.Svc.ListPosts(c.Request.Context(), principal.Must(c))
+	list, err := h.Svc.ListPosts(c.Request.Context(), principal.Must(c), queryID(c, "tenantId"))
 	if err != nil {
 		response.Fail(c, err)
 		return

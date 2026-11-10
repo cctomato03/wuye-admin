@@ -4,6 +4,7 @@
     <ElCard class="art-table-card">
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="loadData">
         <template #left>
+        <OrgTenantSelector class="mr-2" @change="loadData" />
           <ElSpace wrap>
             <ElButton v-auth="'system:dept:create'" @click="openDialog('add', null)" v-ripple>
               新增顶级部门
@@ -83,6 +84,7 @@
 </template>
 
 <script setup lang="ts">
+  import OrgTenantSelector from '@/views/system/components/org-tenant-selector.vue'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import type { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
   import { useTableColumns } from '@/hooks/core/useTableColumns'

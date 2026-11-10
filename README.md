@@ -1,95 +1,164 @@
-# Web Basic Admin · 小区物业管理系统
+# 小区物业管理系统（多租户）
 
-在开箱即用的后台脚手架（**Go + Gin + GORM** 后端，**Vue 3 + Web Admin Pro** 前端，内嵌迁移、单可执行文件部署）
-基础上交付的**面向物业公司的多租户物业管理系统**：一个物业公司 = 一个租户，一个可管理多个小区，
-小区级数据隔离，规模按「万级小区 / 百万级房屋」设计。
+面向物业服务企业的多租户小区管理平台：以「物业公司 = 租户」隔离数据，支持万级小区规模，
+覆盖小区基础信息（自定义层级 + 房屋）、住户与人员、车辆车位、收费账单、设备门禁、组织与权限。
 
-> 📘 二次开发看 [docs/开发手册.md](./docs/开发手册.md) ｜ 🖱 功能使用看 [docs/操作手册.md](./docs/操作手册.md)
-> 🏢 物业业务与数据库设计看 [docs/物业系统设计.md](./docs/物业系统设计.md)
+- 后端：Go 1.26 · Gin · GORM · MySQL 8 · Redis（JWT 鉴权、RBAC 权限、逻辑删除）
+- 前端：Vue 3 · TypeScript · Vite · Element Plus（动态菜单、按钮级权限指令 `v-auth`）
+- 交付形态：单可执行文件 + 前端静态资源（可前后端分离部署）
 
-## 物业模块能力
+---
 
+## 一、功能总览
+
+### 平台侧（平台超级管理员，绑定默认租户）
 | 模块 | 能力 |
 | --- | --- |
-| 小区 / 物业公司 | 平台建物业公司（自动建组织、内置角色、管理员）、建小区（唯一编码/行政区/地址）、公司-小区唯一归属 |
-| 层级 / 房屋 | 层级**自定义**（小区为根，节点只需挂到上一级，可有可无区域/单元）；房屋挂在任意层级节点上，支持批量生成与 Excel 导入 |
-| 住户 | 一户多人、一人多房、跨小区按证件回显（只回显基础资料）、业主/家人/租户 + 有效期、续期/还原/历史、人脸 |
-| 访客 / 其他人员 | 访客预约与进出、随行人员、超时失效；保洁维修等临时人员 + 类别 + 有效期 |
-| 车辆 / 单位 | 业主车/工作车/临时车、车位、进出记录；商铺与办公单位 |
-| 收费 | 按面积·月/·天、按用量、固定金额、按套；住宅与商业分开计价；抄表；账单批量生成；9 种支付方式；余额与押金 |
-| 设备 / 门禁 | 设备绑定到五级层级；住户/访客按房屋逐级追溯设备、物业人员全小区、其他人员手工勾选；人脸/卡/拨号下发、失败重试、到期解除 |
-| 数据隔离 | 租户 + 小区双隔离，撤销授权立即生效；所有业务数据带 create/update/delete 时间，只做逻辑删除 |
+| 工作台 | 平台概览、物业概览、我的待办/消息 |
+| 组织与权限 | 用户 / 角色 / 部门 / 岗位 / 员工（按物业公司隔离；平台角色可切换任意物业公司管理；角色可绑定「可管理小区」） |
+| 系统设置 → 物业公司与小区 | 物业公司（=租户）建档、管理员账号、小区与行政区划 |
+| 系统设置 | 字典、参数、文件、定时任务、站点个性化、接口文档 |
+| 系统监控 | 在线用户、登录日志、操作日志、服务器信息 |
+| 能力开放 | 代码生成、消息与待办推送接口 |
 
-## 特性
-
-- **权限体系**：用户 / 角色 / 菜单（目录·页面·按钮·接口）/ 部门 / 岗位 / 数据权限 / 多租户
-- **工作台**：4 张统计卡片 + 「我的待办 / 我的消息 / 通知公告」页签，顶栏铃铛显示未读
-- **系统设置**：站点个性化（名称/logo/登录页文案/注册开关/验证码/滑块）、字典、参数、租户、文件、定时任务、代码生成
-- **通知与协作**：通知公告（发布扇出站内信）、站内信、待办；业务系统可通过开放接口推送（`X-API-KEY` + 幂等键）
-- **安全**：双 token 静默刷新、图形验证码、滑块校验、登录失败锁定、强口令策略、字段级操作日志
-- **运维**：健康检查、Prometheus 指标、结构化日志、内嵌数据库迁移、Docker Compose
-
-## 快速开始
-
-```bash
-# 基础设施（MySQL 3307 / Redis 6380）
-docker compose -f deploy/docker-compose.yml up -d mysql redis
-
-# 后端（:8090，首次启动自动建表 + 初始化 + 建超管）
-APP__APP__ADMIN_PASSWORD=Admin@123456 go run ./cmd/server -c configs/config.yaml
-
-# 前端（:5173）
-cd web && pnpm install && pnpm dev
-```
-
-默认账号 `admin`，密码取 `APP__APP__ADMIN_PASSWORD`。
-
-物业模块菜单按业务域分组：
-
-| 菜单分组 | 页面 |
+### 物业公司侧（公司管理员，含除平台配置外的全部业务菜单）
+| 模块 | 能力 |
 | --- | --- |
-| 小区管理 | 层级管理（自定义层级树）/ 房屋管理 / 单位管理 / 车辆管理 |
-| 人员管理 | 住户 / 访客 / 其他人员 |
-| 收费管理 | 收费项目 / 账单管理 / 抄表管理 / 缴费记录 |
-| 设备管理 | 设备信息 / 门禁授权 |
-| 组织与权限 | 用户 / 角色 / 部门 / 岗位 / 员工管理（物业公司的组织与权限就在这里） |
+| 小区管理 → 基础信息管理 | 自定义层级树（区域/楼栋/单元/楼层，类型取自字典）+ 房屋；层级/房屋信息卡片；Excel 模板导入导出 |
+| 小区管理 | 单位商铺、车辆与车位（一律按房屋 ID 关联） |
+| 人员管理 | 住户（多小区住户档案、房屋关系、续期、人脸）、访客登记、其他人员（保姆/装修工等） |
+| 收费管理 | 收费项目与标准、生成账单、抄表账单、缴费与余额划扣、缴费记录 |
+| 设备管理 | 设备档案（可绑定任意层级）、门禁授权（人员-房屋-设备-卡片） |
+| 组织与权限 | 用户 / 角色 / 部门 / 岗位 / 员工（子角色菜单与小区不得超过创建者） |
 
-> 物业公司（=租户）与小区由**平台管理员**在「系统设置 → 物业公司与小区」统一维护（两个页签）；
-> 物业公司后台用户看不到该菜单，也创建不了公司/小区。
->
-> 组织与权限：新建物业公司只内置一个「物业公司管理员」角色（拥有除系统监控/系统设置/租户与小区/菜单管理外的全部菜单），
-> 公司管理员可在本公司内继续创建**角色、用户、部门、岗位**；角色可绑定"可管理小区"（本公司全部或指定若干），
-> 子角色的菜单与小区范围都不能超过创建者自己的权限。
+### 数据隔离
+- **租户隔离**：所有业务数据带 `tenant_id`，写操作按调用者租户落库，跨租户读写一律拒绝。
+- **小区隔离**：用户可见小区 = 角色「可管理小区」∪ 直接授权；超出范围返回 403。
+- **逻辑删除**：所有表软删除（`deleted` 毫秒时间戳），列表默认过滤。
+- **审计字段**：`create_by/create_time/update_by/update_time` 全表统一。
 
-物业概览（房屋/住户/收费/门禁指标 + 近半年收费趋势）已并入**工作台**首页。
+---
 
-> 行政区划为省/市/区县/街道/社区五级（全国约 66 万条，内嵌数据集，首次启动自动导入；
-> 需要刷新数据时执行 `node scripts/build-district-data.mjs` 后重启，或调用 `POST /api/v1/property/districts/sync?force=true`）。
+## 二、快速开始
 
-生产部署（单二进制或 Docker）：
+### 1. 依赖
+| 组件 | 版本 | 说明 |
+| --- | --- | --- |
+| Go | 1.26+ | 后端编译 |
+| Node.js + pnpm | 20+ / 9+ | 前端构建 |
+| MySQL | 8.0 | 必须 `parseTime=True&clientFoundRows=true` |
+| Redis | 6+ | 登录态、验证码、权限缓存 |
+
+仓库自带 `deploy/docker-compose.yml`，可一键起 MySQL(3307) + Redis(6380)：
 
 ```bash
-cd web && pnpm build && cd ..
-powershell -ExecutionPolicy Bypass -File scripts/build.ps1   # 或 make build
-docker compose -f deploy/docker-compose.yml up -d --build     # 前后端一体镜像 + MySQL + Redis
+docker compose -f deploy/docker-compose.yml up -d
 ```
 
-## 测试
+### 2. 配置
+`configs/config.yaml`（生产用环境变量覆盖，如 `APP__MYSQL__DSN`、`APP__JWT__SECRET`）：
+
+```yaml
+mysql:
+  dsn: "root:root123@tcp(127.0.0.1:3307)/web_basic?charset=utf8mb4&parseTime=True&loc=Local&timeout=10s&clientFoundRows=true"
+  auto_migrate: true          # 首次启动自动建表 + 迁移 + 基础数据
+redis:
+  addr: "127.0.0.1:6380"
+  prefix: "web:"
+```
+
+### 3. 建库并启动后端
+
+```sql
+CREATE DATABASE web_basic CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+```
 
 ```bash
-node scripts/e2e-api.mjs   http://127.0.0.1:8090 admin  # 脚手架接口 75 条断言
-node scripts/e2e-smoke.mjs http://127.0.0.1:8090 admin  # 脚手架浏览器 61 条断言
-node scripts/e2e-property.mjs    http://127.0.0.1:8090 admin           # 物业接口 114 条断言（含越权/导入/角色与小区范围/房屋ID关联）
-node scripts/e2e-property-ui.mjs http://127.0.0.1:8090 admin Admin@123456 # 物业浏览器 30 条断言
+go build -o bin/wuye-server.exe ./cmd/server
+# 首次建议显式指定超管密码（留空则随机生成并打印在日志中）
+APP__APP__ADMIN_PASSWORD='Admin@123456' ./bin/wuye-server.exe -c configs/config.yaml
 ```
 
-环境变量：`E2E_ADMIN_PASSWORD`（管理员密码）、`E2E_REDIS_CONTAINER`（读验证码用，默认自动探测）、`E2E_BROWSER`。
+首次启动自动完成：建表 → 执行 `migrations/*.up.sql` → 写入超管/菜单/字典/参数 → 异步导入五级行政区划（66 万行）。
+健康检查：`GET http://127.0.0.1:8090/healthz`，接口文档：`http://127.0.0.1:8090/swagger/index.html`。
 
-## 目录速览
+默认账号：`admin / <APP__APP__ADMIN_PASSWORD>`（示例 `Admin@123456`）。
+
+### 4. 前端
+
+```bash
+cd web
+pnpm install
+pnpm dev          # 开发：http://localhost:5173（已放行 CORS）
+pnpm build        # 生产：产物到 web/dist，由后端直接托管
+```
+
+一键构建（前端 + 后端，产物 `bin/wuye-server.exe`）：
+
+```bash
+pwsh scripts/build.ps1          # 需要内嵌前端时加 -tags embed 相关参数见脚本
+```
+
+---
+
+## 三、目录结构
 
 ```
-cmd/server      入口            internal/{api,service,repository,model,router,middleware,migrate}
-migrations      数据库迁移       pkg/{crypto,jwt,errs,response,captcha,id,storage}
-scripts         构建 / 图标子集 / E2E          web/  前端（Vue3 + Web Admin Pro）
-configs         默认配置（环境变量 APP__XXX__YYY 覆盖）      deploy/  Dockerfile + compose
+cmd/server            程序入口（版本注入、优雅退出）
+configs               配置文件（config.yaml）
+internal/
+  api                  HTTP 处理层（参数绑定、错误转换）
+  router               路由与权限中间件（含静态资源、Swagger）
+  service              业务逻辑（物业、权限、收费、门禁、工作台…）
+  repository           数据访问（通用查询、权限查询）
+  model/entity         GORM 实体（带软删除与审计字段）
+  middleware           鉴权、权限、日志、限流、恢复
+  bootstrap            依赖装配、启动期结构校验（EnsureSchema）
+  migrate              极简迁移执行器（schema_migrations）
+  excel                导入导出封装
+  openapi              接口文档页面
+  webui                前端产物托管（磁盘 / 内嵌两种模式）
+pkg/                   errs、response、cache、jwt、storage、id（雪花）、jsonx 等基础设施
+migrations             版本化 SQL（按文件名顺序执行，幂等）
+scripts                构建脚本、行政区划数据生成、E2E 脚本
+web/                   前端工程（Vue3 + Vite + Element Plus）
+docs/                  操作手册 / 开发手册 / 系统设计
 ```
+
+---
+
+## 四、测试与质量
+
+```bash
+# 静态检查
+go vet ./... && gofmt -l internal pkg
+cd web && npx vue-tsc --noEmit && pnpm build
+
+# 接口 + 浏览器端到端（需服务已启动）
+node scripts/e2e-api.mjs        http://127.0.0.1:8090 admin   # 脚手架基线 76 条
+node scripts/e2e-property.mjs   http://127.0.0.1:8090 admin   # 物业业务 + 权限 145 条
+node scripts/e2e-property-ui.mjs http://127.0.0.1:8090 admin Admin@123456  # 浏览器 38 条
+```
+
+> 浏览器脚本会临时关闭 `sys.login.captcha` / `sys.login.slider` 两个登录开关，结束后自动恢复为 `true`。
+
+---
+
+## 五、部署要点
+
+- **数据库**：生产建议 `auto_migrate: false`，由发布流程显式执行迁移；`deploy/` 提供 Dockerfile 与 nginx 示例。
+- **密钥**：务必覆盖 `APP__JWT__SECRET`；首次启动设置 `APP__APP__ADMIN_PASSWORD`。
+- **文件存储**：默认本地 `storage/`（`/static` 前缀）；可切 OSS（`storage.type=oss` + AK/SK）。
+- **行政区划**：首次启动异步导入；也可 `POST /api/v1/property/districts/sync` 手动触发（带分布式锁）。
+- **前端托管**：默认托管 `web/dist`；如需单文件分发，把产物拷到 `internal/webui/dist` 后以 `-tags embed` 构建。
+- **日志与监控**：日志在 `logs/`（按大小切割）；`/metrics` 暴露 Prometheus 指标，`/healthz` 用于探活。
+
+---
+
+## 六、文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/操作手册.md](docs/操作手册.md) | 按角色讲清每个页面怎么用（平台管理员 / 物业公司管理员） |
+| [docs/开发手册.md](docs/开发手册.md) | 分层约定、错误与响应、多租户与数据权限、迁移与幂等、常见坑 |
+| [docs/物业系统设计.md](docs/物业系统设计.md) | 需求范围、权限模型、数据模型、关键流程与非功能设计 |

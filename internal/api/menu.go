@@ -64,7 +64,7 @@ func (h *Handler) DeleteMenu(c *gin.Context) {
 
 // DeptTree 部门树。
 func (h *Handler) DeptTree(c *gin.Context) {
-	tree, err := h.Svc.DeptTree(c.Request.Context(), principal.Must(c))
+	tree, err := h.Svc.DeptTree(c.Request.Context(), principal.Must(c), queryID(c, "tenantId"))
 	if err != nil {
 		response.Fail(c, err)
 		return

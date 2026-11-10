@@ -16,6 +16,7 @@
     <ElCard class="art-table-card flex-1">
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="refreshData">
         <template #left>
+        <OrgTenantSelector class="mr-2" @change="handleTenantChange" />
           <ElSpace wrap>
             <ElButton v-auth="'property:employee:create'" type="primary" @click="openDialog()" v-ripple>新增员工</ElButton>
             <ElButton @click="clearDeptFilter" v-if="query.deptId">清除部门筛选</ElButton>
@@ -131,6 +132,7 @@
 </template>
 
 <script setup lang="ts">
+  import OrgTenantSelector from '@/views/system/components/org-tenant-selector.vue'
   import { ElMessage, ElMessageBox, ElTag, type FormInstance, type FormRules } from 'element-plus'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import type { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
@@ -176,6 +178,12 @@
     status: 1
   })
   const rules: FormRules = { name: [{ required: true, message: '请输入姓名', trigger: 'blur' }] }
+
+  const handleTenantChange = () => {
+    refreshData()
+    fetchGetEmployeeDeptTree().then((list) => (deptTree.value = list || []))
+    fetchGetEmployeeRoles().then((list) => (roles.value = list || []))
+  }
 
   const { columns, columnChecks, data, loading, pagination, getData, replaceSearchParams, handleSizeChange, handleCurrentChange, refreshData } = useTable({
     core: {

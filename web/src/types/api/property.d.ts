@@ -152,6 +152,17 @@ declare namespace Property {
     code: string
     name: string
     nodeType: number
+    category: number
+    floorsAbove?: number
+    floorsUnder?: number
+    unitCount?: number
+    elevatorCount?: number
+    buildArea?: number
+    buildYear?: number
+    structureType?: string
+    deliveryDate?: string
+    address?: string
+    totalFloors?: number
     levelNo: number
     path: string
     floorNo: number
@@ -159,9 +170,87 @@ declare namespace Property {
     childCount: number
     parentName?: string
     levelName?: string
+    typeName?: string
     fullName?: string
     sort?: number
     status?: number
+  }
+
+  /** 树懒加载节点 */
+  interface TreeNodeChild {
+    rowType: 'node' | 'house'
+    node?: StructureNodeItem
+    house?: House
+  }
+
+  /** 层级信息卡片 */
+  interface NodeCard {
+    id: string
+    name: string
+    type: number
+    typeName: string
+    parentId: string
+    parentName: string
+    address: string
+    childNames: string[]
+    houseTotal: number
+    residentCount: number
+    devices: string[]
+    deviceTotal: number
+    pathNames: string[]
+  }
+
+  /** 房屋信息卡片 */
+  interface HouseCard {
+    house: House
+    address: string
+    residents: Array<{
+      residentId: string
+      name: string
+      phone: string
+      role: number
+      roleName: string
+      relation: string
+      isMain: boolean
+      startDate: string
+      endDate: string
+    }>
+    vehicles: Array<{
+      vehicleId: string
+      plateNo: string
+      plateColor: number
+      vehicleType: number
+      vehicleTypeName: string
+      parkingSpaceNo: string
+      ownerType: number
+    }>
+  }
+
+  /** 小区信息卡片 */
+  interface CommunityCard {
+    id: string
+    name: string
+    code: string
+    address: string
+    managerName: string
+    servicePhone: string
+    buildings: number
+    houses: number
+    residents: number
+    devices: number
+    buildArea: number
+    houseArea: number
+  }
+
+  /** 小区基础信息概览 */
+  interface SpaceSummary {
+    buildings: number
+    units: number
+    floors: number
+    houses: number
+    totalBuildArea: number
+    totalHouseArea: number
+    byUsage: Record<string, number>
   }
 
   /** 房屋 */
@@ -186,12 +275,22 @@ declare namespace Property {
     usageType: number
     areaBuild: number
     areaUse: number
+    areaShare: number
+    ceilingHeight?: number
+    propertyRight?: number
+    isStreet?: boolean
+    shopWidth?: number
+    isSale?: boolean
+    facilities?: string
+    handoverStatus?: number
     orientation?: string
     layout?: string
     decoration: number
     houseStatus: number
     ownerCount: number
     residentCount: number
+    deliveryDate?: string
+    remark?: string
   }
 
   /** 房屋类型 */

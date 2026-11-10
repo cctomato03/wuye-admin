@@ -26,16 +26,26 @@ import (
 
 // NodeReq 层级节点入参。
 type NodeReq struct {
-	CommunityID jsonx.Uint64 `json:"communityId" binding:"required"`
-	ParentID    jsonx.Uint64 `json:"parentId"`
-	Code        string       `json:"code" binding:"max=64"`
-	Name        string       `json:"name" binding:"required,max=64"`
-	NodeType    int          `json:"nodeType"`
-	TotalFloors int          `json:"totalFloors"`
-	FloorNo     int          `json:"floorNo"`
-	Sort        int          `json:"sort"`
-	Status      int          `json:"status"`
-	Remark      string       `json:"remark" binding:"max=500"`
+	CommunityID   jsonx.Uint64 `json:"communityId" binding:"required"`
+	ParentID      jsonx.Uint64 `json:"parentId"`
+	Code          string       `json:"code" binding:"max=64"`
+	Name          string       `json:"name" binding:"required,max=64"`
+	NodeType      int          `json:"nodeType"`
+	Category      int          `json:"category"`
+	TotalFloors   int          `json:"totalFloors"`
+	FloorsAbove   int          `json:"floorsAbove"`
+	FloorsUnder   int          `json:"floorsUnder"`
+	UnitCount     int          `json:"unitCount"`
+	ElevatorCount int          `json:"elevatorCount"`
+	BuildArea     float64      `json:"buildArea"`
+	BuildYear     int          `json:"buildYear"`
+	StructureType string       `json:"structureType" binding:"max=32"`
+	DeliveryDate  string       `json:"deliveryDate"`
+	Address       string       `json:"address" binding:"max=255"`
+	FloorNo       int          `json:"floorNo"`
+	Sort          int          `json:"sort"`
+	Status        int          `json:"status"`
+	Remark        string       `json:"remark" binding:"max=500"`
 }
 
 // NodeVO 层级节点出参（带级别名称）。
@@ -46,9 +56,36 @@ type NodeVO struct {
 	HouseCount int    `json:"houseCount"`
 	ChildCount int    `json:"childCount"`
 	FullName   string `json:"fullName"`
+	TypeName   string `json:"typeName"`
 }
 
-var nodeTypeNames = map[int]string{1: "区域", 2: "楼栋", 3: "单元", 4: "楼层", 5: "自定义"}
+var nodeTypeNames = map[int]string{1: "区域", 2: "楼栋", 3: "单元", 4: "楼层"}
+
+// nodeTypeName 层级类型名称（只允许区域/楼栋/单元/楼层）。
+func nodeTypeName(t int) string {
+	if v, ok := nodeTypeNames[t]; ok {
+		return v
+	}
+	return "层级"
+}
+
+// validNodeType 层级类型必须来自字典 space_node_type（区域/楼栋/单元/楼层）。
+func validNodeType(t int) bool {
+	_, ok := nodeTypeNames[t]
+	return ok
+}
+
+// communityBaseAddress 小区基础地址（省市区 + 详细地址）。
+func communityBaseAddress(c *entity.Community) string {
+	if c == nil {
+		return ""
+	}
+	addr := strings.TrimSpace(c.Address)
+	if addr == "" {
+		addr = strings.TrimSpace(c.Province + c.City + c.District)
+	}
+	return addr
+}
 
 // NodeTree 返回小区层级树（节点自身，不再固定四级）。
 func (s *Service) NodeTree(ctx context.Context, communityID uint64, p *principal.Info) ([]*NodeVO, error) {
@@ -89,6 +126,7 @@ func (s *Service) NodeTree(ctx context.Context, communityID uint64, p *principal
 			HouseCount:    houseCount[n.ID],
 			ChildCount:    childCount[n.ID],
 			FullName:      s.nodeFullName(nameByID, n),
+			TypeName:      nodeTypeName(n.NodeType),
 		})
 	}
 	return out, nil
@@ -124,6 +162,19 @@ func (s *Service) CreateNode(ctx context.Context, req *NodeReq, p *principal.Inf
 			return 0, errs.Invalid("上级层级不存在或不属于当前小区")
 		}
 	}
+	if !validNodeType(req.NodeType) {
+		return 0, errs.Invalid("请选择层级类型（区域/楼栋/单元/楼层）")
+	}
+	// 同一上级下名称必须唯一
+	var dup int64
+	if err := s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).
+		Where("community_id = ? AND parent_id = ? AND name = ?", com.ID, req.ParentID.Uint64(), strings.TrimSpace(req.Name)).
+		Count(&dup).Error; err != nil {
+		return 0, errs.ErrDB.WithErr(err)
+	}
+	if dup > 0 {
+		return 0, errs.Invalid("同一上级下已存在同名层级")
+	}
 	level := 1
 	path := ""
 	if parent != nil {
@@ -141,20 +192,43 @@ func (s *Service) CreateNode(ctx context.Context, req *NodeReq, p *principal.Inf
 	} else {
 		path = fmt.Sprintf("0,%d", nodeID)
 	}
+	delivery, err := parseDate(req.DeliveryDate)
+	if err != nil {
+		return 0, err
+	}
+	// 地址 = 上级地址 + 名称；小区下一级 = 小区地址 + 名称
+	baseAddr := communityBaseAddress(com)
+	if parent != nil {
+		baseAddr = parent.FullAddress
+		if baseAddr == "" {
+			baseAddr = communityBaseAddress(com)
+		}
+	}
 	n := &entity.StructureNode{
-		Base:        entity.Base{ID: nodeID, CreateBy: p.UserID, CreateTime: now, UpdateBy: p.UserID, UpdateTime: &now, Remark: req.Remark},
-		TenantID:    com.TenantID,
-		CommunityID: com.ID,
-		ParentID:    req.ParentID.Uint64(),
-		Code:        code,
-		Name:        strings.TrimSpace(req.Name),
-		NodeType:    pmDefault(req.NodeType, 5),
-		LevelNo:     level,
-		Path:        path,
-		TotalFloors: req.TotalFloors,
-		FloorNo:     req.FloorNo,
-		Sort:        req.Sort,
-		Status:      pmDefault(req.Status, 1),
+		Base:          entity.Base{ID: nodeID, CreateBy: p.UserID, CreateTime: now, UpdateBy: p.UserID, UpdateTime: &now, Remark: req.Remark},
+		TenantID:      com.TenantID,
+		CommunityID:   com.ID,
+		ParentID:      req.ParentID.Uint64(),
+		Code:          code,
+		Name:          strings.TrimSpace(req.Name),
+		NodeType:      pmDefault(req.NodeType, 5),
+		Category:      pmDefault(req.Category, 9),
+		LevelNo:       level,
+		Path:          path,
+		TotalFloors:   req.TotalFloors,
+		FloorsAbove:   req.FloorsAbove,
+		FloorsUnder:   req.FloorsUnder,
+		UnitCount:     req.UnitCount,
+		ElevatorCount: req.ElevatorCount,
+		BuildArea:     req.BuildArea,
+		BuildYear:     req.BuildYear,
+		StructureType: req.StructureType,
+		DeliveryDate:  delivery,
+		Address:       req.Address,
+		FullAddress:   baseAddr + strings.TrimSpace(req.Name),
+		FloorNo:       req.FloorNo,
+		Sort:          req.Sort,
+		Status:        pmDefault(req.Status, 1),
 	}
 	if err := s.Repo.DB.WithContext(ctx).Create(n).Error; err != nil {
 		return 0, wrapTxErr(err)
@@ -167,6 +241,9 @@ func (s *Service) UpdateNode(ctx context.Context, nodeID uint64, req *NodeReq, p
 	n, err := s.nodeScoped(ctx, p, nodeID)
 	if err != nil {
 		return err
+	}
+	if !validNodeType(req.NodeType) {
+		return errs.Invalid("请选择层级类型（区域/楼栋/单元/楼层）")
 	}
 	parentID := req.ParentID.Uint64()
 	if parentID != 0 {
@@ -182,6 +259,19 @@ func (s *Service) UpdateNode(ctx context.Context, nodeID uint64, req *NodeReq, p
 			return errs.Invalid("不能把层级挂到自己的子层级下")
 		}
 	}
+	// 同级重名校验（排除自身）
+	var dup int64
+	if err := s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).
+		Where("community_id = ? AND parent_id = ? AND name = ? AND id <> ?", n.CommunityID, parentID, strings.TrimSpace(req.Name), n.ID).
+		Count(&dup).Error; err != nil {
+		return errs.ErrDB.WithErr(err)
+	}
+	if dup > 0 {
+		return errs.Invalid("同一上级下已存在同名层级")
+	}
+	var com entity.Community
+	_ = s.Repo.DB.WithContext(ctx).Where("id = ?", n.CommunityID).First(&com).Error
+	baseAddr := communityBaseAddress(&com)
 	oldPath := n.Path
 	newLevel := 1
 	newPath := fmt.Sprintf("0,%d", n.ID)
@@ -190,21 +280,40 @@ func (s *Service) UpdateNode(ctx context.Context, nodeID uint64, req *NodeReq, p
 		_ = s.Repo.DB.WithContext(ctx).Where("id = ?", parentID).First(&parent).Error
 		newLevel = parent.LevelNo + 1
 		newPath = fmt.Sprintf("%s,%d", parent.Path, n.ID)
+		if parent.FullAddress != "" {
+			baseAddr = parent.FullAddress
+		}
+	}
+	newFullAddress := baseAddr + strings.TrimSpace(req.Name)
+	delivery, err := parseDate(req.DeliveryDate)
+	if err != nil {
+		return err
 	}
 	if err := s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).Where("id = ?", n.ID).Updates(map[string]any{
-		"parent_id":    parentID,
-		"code":         defaultIfEmpty(strings.TrimSpace(req.Code), n.Code),
-		"name":         strings.TrimSpace(req.Name),
-		"node_type":    pmDefault(req.NodeType, n.NodeType),
-		"level_no":     newLevel,
-		"path":         newPath,
-		"total_floors": req.TotalFloors,
-		"floor_no":     req.FloorNo,
-		"sort":         req.Sort,
-		"status":       pmDefault(req.Status, 1),
-		"remark":       req.Remark,
-		"update_by":    p.UserID,
-		"update_time":  time.Now(),
+		"parent_id":      parentID,
+		"code":           defaultIfEmpty(strings.TrimSpace(req.Code), n.Code),
+		"name":           strings.TrimSpace(req.Name),
+		"node_type":      pmDefault(req.NodeType, n.NodeType),
+		"category":       pmDefault(req.Category, n.Category),
+		"level_no":       newLevel,
+		"path":           newPath,
+		"total_floors":   req.TotalFloors,
+		"floors_above":   req.FloorsAbove,
+		"floors_under":   req.FloorsUnder,
+		"unit_count":     req.UnitCount,
+		"elevator_count": req.ElevatorCount,
+		"build_area":     req.BuildArea,
+		"build_year":     req.BuildYear,
+		"structure_type": req.StructureType,
+		"delivery_date":  delivery,
+		"address":        req.Address,
+		"full_address":   newFullAddress,
+		"floor_no":       req.FloorNo,
+		"sort":           req.Sort,
+		"status":         pmDefault(req.Status, 1),
+		"remark":         req.Remark,
+		"update_by":      p.UserID,
+		"update_time":    time.Now(),
 	}).Error; err != nil {
 		return wrapTxErr(err)
 	}
@@ -214,7 +323,22 @@ func (s *Service) UpdateNode(ctx context.Context, nodeID uint64, req *NodeReq, p
 			"UPDATE pm_structure_node SET path = CONCAT(?, SUBSTRING(path, ?)) WHERE community_id = ? AND path LIKE ?",
 			newPath, len(oldPath)+1, n.CommunityID, oldPath+",%").Error
 	}
+	// 自身或父级地址变化时，级联刷新所有后代地址
+	if oldPath != newPath || req.Name != "" {
+		s.cascadeNodeAddress(ctx, n.CommunityID, n.ID, newFullAddress)
+	}
 	return nil
+}
+
+// cascadeNodeAddress 递归刷新子节点的 full_address（父地址 + 名称）。
+func (s *Service) cascadeNodeAddress(ctx context.Context, communityID, rootID uint64, rootAddress string) {
+	var children []entity.StructureNode
+	_ = s.Repo.DB.WithContext(ctx).Where("community_id = ? AND parent_id = ?", communityID, rootID).Find(&children).Error
+	for _, c := range children {
+		addr := rootAddress + c.Name
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).Where("id = ?", c.ID).UpdateColumn("full_address", addr).Error
+		s.cascadeNodeAddress(ctx, communityID, c.ID, addr)
+	}
 }
 
 // DeleteNode 删除层级节点（有子节点或房屋时拒绝）。
@@ -291,6 +415,7 @@ type HouseQuery struct {
 	CommunityID jsonx.Uint64 `form:"communityId"`
 	NodeID      jsonx.Uint64 `form:"nodeId"`
 	IncludeSub  *bool        `form:"includeSub"`
+	RootOnly    bool         `form:"rootOnly"`
 	RegionID    jsonx.Uint64 `form:"regionId"`
 	BuildingID  jsonx.Uint64 `form:"buildingId"`
 	UnitID      jsonx.Uint64 `form:"unitId"`
@@ -321,6 +446,9 @@ func (s *Service) ListHouses(ctx context.Context, q *HouseQuery, p *principal.In
 	tx := s.scoped(ctx, &entity.House{}, p, "")
 	if q.CommunityID.Uint64() != 0 {
 		tx = tx.Where("community_id = ?", q.CommunityID.Uint64())
+	}
+	if q.RootOnly {
+		tx = tx.Where("node_id = 0")
 	}
 	if q.NodeID.Uint64() != 0 {
 		includeSub := true
@@ -461,25 +589,33 @@ func (s *Service) fillHouseNames(ctx context.Context, list []entity.House) []Hou
 
 // HouseReq 房屋入参（nodeId 为新模型主键；兼容旧字段 buildingId/unitId/floorId）。
 type HouseReq struct {
-	CommunityID  jsonx.Uint64 `json:"communityId"`
-	NodeID       jsonx.Uint64 `json:"nodeId"`
-	BuildingID   jsonx.Uint64 `json:"buildingId"`
-	UnitID       jsonx.Uint64 `json:"unitId"`
-	FloorID      jsonx.Uint64 `json:"floorId"`
-	FloorNo      int          `json:"floorNo"`
-	HouseTypeID  jsonx.Uint64 `json:"houseTypeId"`
-	Code         string       `json:"code" binding:"required,max=64"`
-	HouseNo      string       `json:"houseNo" binding:"required,max=64"`
-	UsageType    int          `json:"usageType"`
-	AreaBuild    float64      `json:"areaBuild"`
-	AreaUse      float64      `json:"areaUse"`
-	Orientation  string       `json:"orientation" binding:"max=20"`
-	Layout       string       `json:"layout" binding:"max=64"`
-	Decoration   int          `json:"decoration"`
-	HouseStatus  int          `json:"houseStatus"`
-	DeliveryDate string       `json:"deliveryDate"`
-	Sort         int          `json:"sort"`
-	Remark       string       `json:"remark" binding:"max=500"`
+	CommunityID    jsonx.Uint64 `json:"communityId"`
+	NodeID         jsonx.Uint64 `json:"nodeId"`
+	BuildingID     jsonx.Uint64 `json:"buildingId"`
+	UnitID         jsonx.Uint64 `json:"unitId"`
+	FloorID        jsonx.Uint64 `json:"floorId"`
+	FloorNo        int          `json:"floorNo"`
+	HouseTypeID    jsonx.Uint64 `json:"houseTypeId"`
+	Code           string       `json:"code" binding:"required,max=64"`
+	HouseNo        string       `json:"houseNo" binding:"required,max=64"`
+	UsageType      int          `json:"usageType"`
+	AreaBuild      float64      `json:"areaBuild"`
+	AreaUse        float64      `json:"areaUse"`
+	AreaShare      float64      `json:"areaShare"`
+	CeilingHeight  float64      `json:"ceilingHeight"`
+	PropertyRight  int          `json:"propertyRight"`
+	IsStreet       bool         `json:"isStreet"`
+	ShopWidth      float64      `json:"shopWidth"`
+	IsSale         bool         `json:"isSale"`
+	Facilities     string       `json:"facilities" binding:"max=500"`
+	HandoverStatus int          `json:"handoverStatus"`
+	Orientation    string       `json:"orientation" binding:"max=20"`
+	Layout         string       `json:"layout" binding:"max=64"`
+	Decoration     int          `json:"decoration"`
+	HouseStatus    int          `json:"houseStatus"`
+	DeliveryDate   string       `json:"deliveryDate"`
+	Sort           int          `json:"sort"`
+	Remark         string       `json:"remark" binding:"max=500"`
 }
 
 // CreateHouse 新增房屋（必须挂到某个层级节点）。
@@ -488,30 +624,53 @@ func (s *Service) CreateHouse(ctx context.Context, req *HouseReq, p *principal.I
 	if nodeID == 0 {
 		nodeID = firstNonZeroU(req.FloorID.Uint64(), req.UnitID.Uint64(), req.BuildingID.Uint64())
 	}
-	if nodeID == 0 {
-		return 0, errs.Invalid("请选择房屋所属层级")
+	var node *entity.StructureNode
+	var com *entity.Community
+	var err error
+	if nodeID != 0 {
+		node, err = s.nodeScoped(ctx, p, nodeID)
+		if err != nil {
+			return 0, err
+		}
+		com, err = s.findCommunity(ctx, p, node.CommunityID)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		// 直接挂在小区的房屋
+		if req.CommunityID.Uint64() == 0 {
+			return 0, errs.Invalid("请选择小区")
+		}
+		if err := s.MustCommunity(ctx, p, req.CommunityID.Uint64()); err != nil {
+			return 0, err
+		}
+		com, err = s.findCommunity(ctx, p, req.CommunityID.Uint64())
+		if err != nil {
+			return 0, err
+		}
 	}
-	node, err := s.nodeScoped(ctx, p, nodeID)
-	if err != nil {
-		return 0, err
-	}
-	h, err := s.buildHouse(ctx, node, req, p)
+	h, err := s.buildHouse(ctx, node, com, req, p)
 	if err != nil {
 		return 0, err
 	}
 	if err := s.Repo.DB.WithContext(ctx).Create(h).Error; err != nil {
 		return 0, wrapTxErr(err)
 	}
-	s.recalcNodeCounts(ctx, node.CommunityID)
-	s.recalcCommunityCounts(ctx, node.CommunityID)
+	if node != nil {
+		s.recalcNodeCounts(ctx, node.CommunityID)
+	}
+	s.recalcCommunityCounts(ctx, h.CommunityID)
 	return h.ID, nil
 }
 
 // buildHouse 组装房屋（从节点路径推导楼栋/单元/楼层与全称）。
-func (s *Service) buildHouse(ctx context.Context, node *entity.StructureNode, req *HouseReq, p *principal.Info) (*entity.House, error) {
+func (s *Service) buildHouse(ctx context.Context, node *entity.StructureNode, com *entity.Community, req *HouseReq, p *principal.Info) (*entity.House, error) {
 	// 取整条路径节点，用于填充 building_id/unit_id/floor_id/full_name
 	var chain []entity.StructureNode
-	ids := parsePathIDs(node.Path)
+	ids := []uint64{}
+	if node != nil {
+		ids = parsePathIDs(node.Path)
+	}
 	if len(ids) > 0 {
 		_ = s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).Where("id IN ?", ids).Find(&chain).Error
 	}
@@ -547,6 +706,19 @@ func (s *Service) buildHouse(ctx context.Context, node *entity.StructureNode, re
 			}
 		}
 	}
+	var tenantID, communityID, nodeID uint64
+	baseAddr := communityBaseAddress(com)
+	if node != nil {
+		tenantID, communityID, nodeID = node.TenantID, node.CommunityID, node.ID
+		if node.FullAddress != "" {
+			baseAddr = node.FullAddress
+		}
+	} else if com != nil {
+		tenantID, communityID = com.TenantID, com.ID
+	}
+	if communityID == 0 {
+		return nil, errs.Invalid("房屋必须属于某个小区")
+	}
 	var houseTypeName string
 	if req.HouseTypeID.Uint64() != 0 {
 		typeNames := s.nameMap(ctx, &entity.HouseType{}, []uint64{req.HouseTypeID.Uint64()})
@@ -557,37 +729,50 @@ func (s *Service) buildHouse(ctx context.Context, node *entity.StructureNode, re
 		return nil, err
 	}
 	floorNo := req.FloorNo
-	if floorNo == 0 && node.NodeType == 4 {
+	if floorNo == 0 && node != nil && node.NodeType == 4 {
 		floorNo = node.FloorNo
 	}
 	now := time.Now()
 	fullName := strings.Join(names, "")
-	if fullName == "" {
+	if fullName == "" && node != nil {
 		fullName = node.Name
+	}
+	if node != nil && node.FullAddress != "" {
+		fullName = node.FullAddress
+	} else {
+		fullName = baseAddr
 	}
 	fullName += strings.TrimSpace(req.HouseNo)
 	return &entity.House{
-		Base:         entity.Base{ID: id.Next(), CreateBy: p.UserID, CreateTime: now, UpdateBy: p.UserID, UpdateTime: &now, Remark: req.Remark},
-		TenantID:     node.TenantID,
-		CommunityID:  node.CommunityID,
-		NodeID:       node.ID,
-		BuildingID:   buildingID,
-		UnitID:       unitID,
-		FloorID:      floorID,
-		FloorNo:      floorNo,
-		HouseTypeID:  req.HouseTypeID.Uint64(),
-		Code:         strings.TrimSpace(req.Code),
-		HouseNo:      strings.TrimSpace(req.HouseNo),
-		FullName:     fullName,
-		UsageType:    pmDefault(req.UsageType, 1),
-		AreaBuild:    req.AreaBuild,
-		AreaUse:      req.AreaUse,
-		Orientation:  req.Orientation,
-		Layout:       defaultIfEmpty(req.Layout, houseTypeName),
-		Decoration:   req.Decoration,
-		HouseStatus:  pmDefault(req.HouseStatus, 1),
-		DeliveryDate: delivery,
-		Sort:         req.Sort,
+		Base:           entity.Base{ID: id.Next(), CreateBy: p.UserID, CreateTime: now, UpdateBy: p.UserID, UpdateTime: &now, Remark: req.Remark},
+		TenantID:       tenantID,
+		CommunityID:    communityID,
+		NodeID:         nodeID,
+		BuildingID:     buildingID,
+		UnitID:         unitID,
+		FloorID:        floorID,
+		FloorNo:        floorNo,
+		HouseTypeID:    req.HouseTypeID.Uint64(),
+		Code:           strings.TrimSpace(req.Code),
+		HouseNo:        strings.TrimSpace(req.HouseNo),
+		FullName:       fullName,
+		UsageType:      pmDefault(req.UsageType, 1),
+		AreaBuild:      req.AreaBuild,
+		AreaUse:        req.AreaUse,
+		AreaShare:      req.AreaShare,
+		CeilingHeight:  req.CeilingHeight,
+		PropertyRight:  pmDefault(req.PropertyRight, 1),
+		IsStreet:       req.IsStreet,
+		ShopWidth:      req.ShopWidth,
+		IsSale:         req.IsSale,
+		Facilities:     req.Facilities,
+		HandoverStatus: pmDefault(req.HandoverStatus, 1),
+		Orientation:    req.Orientation,
+		Layout:         defaultIfEmpty(req.Layout, houseTypeName),
+		Decoration:     req.Decoration,
+		HouseStatus:    pmDefault(req.HouseStatus, 1),
+		DeliveryDate:   delivery,
+		Sort:           req.Sort,
 	}, nil
 }
 
@@ -601,36 +786,59 @@ func (s *Service) UpdateHouse(ctx context.Context, houseID uint64, req *HouseReq
 	if nodeID == 0 {
 		nodeID = h.NodeID
 	}
-	node, err := s.nodeScoped(ctx, p, nodeID)
-	if err != nil {
-		return err
+	var node *entity.StructureNode
+	var com *entity.Community
+	if nodeID != 0 {
+		node, err = s.nodeScoped(ctx, p, nodeID)
+		if err != nil {
+			return err
+		}
+	} else {
+		com, err = s.findCommunity(ctx, p, h.CommunityID)
+		if err != nil {
+			return err
+		}
 	}
-	built, err := s.buildHouse(ctx, node, req, p)
+	if node != nil {
+		com, err = s.findCommunity(ctx, p, node.CommunityID)
+		if err != nil {
+			return err
+		}
+	}
+	built, err := s.buildHouse(ctx, node, com, req, p)
 	if err != nil {
 		return err
 	}
 	if err := s.Repo.DB.WithContext(ctx).Model(&entity.House{}).Where("id = ?", h.ID).Updates(map[string]any{
-		"node_id":       built.NodeID,
-		"building_id":   built.BuildingID,
-		"unit_id":       built.UnitID,
-		"floor_id":      built.FloorID,
-		"floor_no":      built.FloorNo,
-		"house_type_id": built.HouseTypeID,
-		"code":          built.Code,
-		"house_no":      built.HouseNo,
-		"full_name":     built.FullName,
-		"usage_type":    built.UsageType,
-		"area_build":    built.AreaBuild,
-		"area_use":      built.AreaUse,
-		"orientation":   built.Orientation,
-		"layout":        built.Layout,
-		"decoration":    built.Decoration,
-		"house_status":  built.HouseStatus,
-		"delivery_date": built.DeliveryDate,
-		"sort":          built.Sort,
-		"remark":        req.Remark,
-		"update_by":     p.UserID,
-		"update_time":   time.Now(),
+		"node_id":         built.NodeID,
+		"building_id":     built.BuildingID,
+		"unit_id":         built.UnitID,
+		"floor_id":        built.FloorID,
+		"floor_no":        built.FloorNo,
+		"house_type_id":   built.HouseTypeID,
+		"code":            built.Code,
+		"house_no":        built.HouseNo,
+		"full_name":       built.FullName,
+		"usage_type":      built.UsageType,
+		"area_build":      built.AreaBuild,
+		"area_use":        built.AreaUse,
+		"area_share":      built.AreaShare,
+		"ceiling_height":  built.CeilingHeight,
+		"property_right":  built.PropertyRight,
+		"is_street":       built.IsStreet,
+		"shop_width":      built.ShopWidth,
+		"is_sale":         built.IsSale,
+		"facilities":      built.Facilities,
+		"handover_status": built.HandoverStatus,
+		"orientation":     built.Orientation,
+		"layout":          built.Layout,
+		"decoration":      built.Decoration,
+		"house_status":    built.HouseStatus,
+		"delivery_date":   built.DeliveryDate,
+		"sort":            built.Sort,
+		"remark":          req.Remark,
+		"update_by":       p.UserID,
+		"update_time":     time.Now(),
 	}).Error; err != nil {
 		return wrapTxErr(err)
 	}
@@ -957,4 +1165,196 @@ func firstNonZeroU(ids ...uint64) uint64 {
 		}
 	}
 	return 0
+}
+
+// SpaceSummary 小区基础信息概览（楼栋/单元/楼层/房屋与面积汇总）。
+type SpaceSummary struct {
+	Buildings      int64            `json:"buildings"`
+	Units          int64            `json:"units"`
+	Floors         int64            `json:"floors"`
+	Houses         int64            `json:"houses"`
+	TotalBuildArea float64          `json:"totalBuildArea"`
+	TotalHouseArea float64          `json:"totalHouseArea"`
+	ByUsage        map[string]int64 `json:"byUsage"`
+}
+
+// Summary 统计小区空间与房屋。
+func (s *Service) SpaceSummary(ctx context.Context, communityID uint64, p *principal.Info) (*SpaceSummary, error) {
+	if err := s.MustCommunity(ctx, p, communityID); err != nil {
+		return nil, err
+	}
+	out := &SpaceSummary{ByUsage: map[string]int64{}}
+	var nodeRows []struct {
+		NodeType int
+		Count    int64
+		Area     float64
+	}
+	_ = s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).
+		Select("node_type, COUNT(*) AS count, IFNULL(SUM(build_area),0) AS area").
+		Where("community_id = ?", communityID).Group("node_type").Scan(&nodeRows).Error
+	for _, r := range nodeRows {
+		switch r.NodeType {
+		case 2:
+			out.Buildings += r.Count
+		case 3:
+			out.Units += r.Count
+		case 4:
+			out.Floors += r.Count
+		}
+		out.TotalBuildArea += r.Area
+	}
+	var houseRows []struct {
+		UsageType int
+		Count     int64
+		Area      float64
+	}
+	_ = s.Repo.DB.WithContext(ctx).Model(&entity.House{}).
+		Select("usage_type, COUNT(*) AS count, IFNULL(SUM(area_build),0) AS area").
+		Where("community_id = ?", communityID).Group("usage_type").Scan(&houseRows).Error
+	for _, r := range houseRows {
+		out.Houses += r.Count
+		out.TotalHouseArea += r.Area
+		switch r.UsageType {
+		case 1:
+			out.ByUsage["residential"] += r.Count
+		case 2:
+			out.ByUsage["commercial"] += r.Count
+		case 3:
+			out.ByUsage["office"] += r.Count
+		case 4:
+			out.ByUsage["parking"] += r.Count
+		default:
+			out.ByUsage["other"] += r.Count
+		}
+	}
+	out.TotalBuildArea = round2(out.TotalBuildArea)
+	out.TotalHouseArea = round2(out.TotalHouseArea)
+	return out, nil
+}
+
+// spaceCategoryText 空间类别 → 文本。
+func spaceCategoryText(c int) string {
+	switch c {
+	case 1:
+		return "住宅楼"
+	case 2:
+		return "别墅"
+	case 3:
+		return "商业楼"
+	case 4:
+		return "办公楼"
+	case 5:
+		return "车库/车位"
+	case 6:
+		return "配套设施"
+	default:
+		return "其他"
+	}
+}
+
+// houseUsageText 房屋用途 → 文本。
+func houseUsageText(u int) string {
+	switch u {
+	case 1:
+		return "住宅"
+	case 2:
+		return "商业"
+	case 3:
+		return "办公"
+	case 4:
+		return "车位"
+	default:
+		return "其他"
+	}
+}
+
+// propertyRightText 产权性质 → 文本。
+func propertyRightText(v int) string {
+	switch v {
+	case 1:
+		return "商品房"
+	case 2:
+		return "安置房"
+	case 3:
+		return "公房"
+	case 4:
+		return "自建"
+	default:
+		return "其他"
+	}
+}
+
+func parseSpaceCategory(v string) int {
+	switch strings.TrimSpace(v) {
+	case "住宅楼", "住宅", "1":
+		return 1
+	case "别墅", "2":
+		return 2
+	case "商业楼", "商业", "3":
+		return 3
+	case "办公楼", "办公", "4":
+		return 4
+
+	case "配套", "配套设施", "6":
+		return 6
+	default:
+		return 9
+	}
+}
+
+func parsePropertyRight(v string) int {
+	switch strings.TrimSpace(v) {
+	case "安置房", "2":
+		return 2
+	case "公房", "3":
+		return 3
+	case "自建", "4":
+		return 4
+	case "其他", "9":
+		return 9
+	default:
+		return 1
+	}
+}
+
+func decorationText(v int) string {
+	switch v {
+	case 1:
+		return "毛坯"
+	case 2:
+		return "简装"
+	case 3:
+		return "精装"
+	default:
+		return ""
+	}
+}
+
+func houseStatusText(v int) string {
+	switch v {
+	case 2:
+		return "自住"
+	case 3:
+		return "出租"
+	case 4:
+		return "装修中"
+	case 5:
+		return "停用"
+	default:
+		return "空置"
+	}
+}
+
+func yesNo(v bool) string {
+	if v {
+		return "是"
+	}
+	return "否"
+}
+
+func formatDateOnly(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02")
 }

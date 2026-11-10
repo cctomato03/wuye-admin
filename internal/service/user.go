@@ -44,6 +44,7 @@ func (s *Service) userOfTenant(ctx context.Context, userID uint64, p *principal.
 
 // CreateUserReq 新增用户入参。
 type CreateUserReq struct {
+	TenantID jsonx.Uint64      `json:"tenantId"`
 	Username string            `json:"username" binding:"required,min=3,max=32"`
 	Nickname string            `json:"nickname" binding:"max=64"`
 	Password string            `json:"password" binding:"omitempty,min=6,max=32"`
@@ -73,6 +74,11 @@ type UpdateUserReq struct {
 
 // ListUsers 分页查询用户。
 func (s *Service) ListUsers(ctx context.Context, q *repository.UserQuery, p *principal.Info) ([]UserVO, int64, error) {
+	tenantID, err := s.OrgTenant(ctx, p, q.TenantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	q.TenantID = tenantID
 	var deptIDs []uint64
 	if q.DeptID > 0 {
 		ids, err := s.Repo.SubtreeDeptIDs(ctx, q.DeptID)
@@ -87,7 +93,7 @@ func (s *Service) ListUsers(ctx context.Context, q *repository.UserQuery, p *pri
 		return nil, 0, errs.ErrDB.WithErr(err)
 	}
 
-	deptNames, _ := s.deptNameMap(ctx, p.TenantID)
+	deptNames, _ := s.deptNameMap(ctx, tenantID)
 	out := make([]UserVO, 0, len(users))
 	for _, u := range users {
 		vo := UserVO{User: u, DeptName: deptNames[u.DeptID]}
@@ -176,7 +182,11 @@ func (s *Service) assertRolesOfTenant(ctx context.Context, roleIDs []uint64, ten
 
 // CreateUser 新增用户。
 func (s *Service) CreateUser(ctx context.Context, req *CreateUserReq, p *principal.Info) (uint64, error) {
-	existing, err := s.Repo.FindUserByUsername(ctx, p.TenantID, req.Username)
+	tenantID, err := s.OrgTenant(ctx, p, req.TenantID.Uint64())
+	if err != nil {
+		return 0, err
+	}
+	existing, err := s.Repo.FindUserByUsername(ctx, tenantID, req.Username)
 	if err != nil {
 		return 0, errs.ErrDB.WithErr(err)
 	}
@@ -185,7 +195,7 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserReq, p *princip
 	}
 
 	pwd := req.Password
-	if err := s.assertRolesOfTenant(ctx, req.RoleIDs.ToUint64(), p.TenantID); err != nil {
+	if err := s.assertRolesOfTenant(ctx, req.RoleIDs.ToUint64(), tenantID); err != nil {
 		return 0, err
 	}
 	if pwd == "" {
@@ -218,7 +228,7 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserReq, p *princip
 		Sex:           req.Sex,
 		Status:        req.Status,
 		PwdUpdateTime: &now,
-		TenantID:      p.TenantID,
+		TenantID:      tenantID,
 	}
 	if user.Nickname == "" {
 		user.Nickname = req.Username
@@ -232,6 +242,16 @@ func (s *Service) CreateUser(ctx context.Context, req *CreateUserReq, p *princip
 
 // UpdateUser 修改用户。
 func (s *Service) UpdateUser(ctx context.Context, userID uint64, req *UpdateUserReq, p *principal.Info) error {
+	target, err := s.Repo.FindUserByID(ctx, userID)
+	if err != nil {
+		return errs.ErrDB.WithErr(err)
+	}
+	if target == nil {
+		return errs.ErrNotFound
+	}
+	if err := s.AssertTenantAllowed(ctx, p, target.TenantID); err != nil {
+		return err
+	}
 	u, err := s.userOfTenant(ctx, userID, p)
 	if err != nil {
 		return err
@@ -366,7 +386,7 @@ func (s *Service) AssignUserRoles(ctx context.Context, userID uint64, roleIDs []
 	if u.IsSuper && !p.IsSuper {
 		return errs.ErrCannotOperateSup
 	}
-	if err := s.assertRolesOfTenant(ctx, roleIDs, p.TenantID); err != nil {
+	if err := s.assertRolesOfTenant(ctx, roleIDs, u.TenantID); err != nil {
 		return err
 	}
 	if err := s.Repo.SetUserRoles(ctx, userID, roleIDs); err != nil {

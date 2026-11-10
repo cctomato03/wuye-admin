@@ -10,6 +10,7 @@
  */
 import request from '@/utils/http'
 import { toPageQuery, toTablePage } from './business'
+import { currentOrgTenantId } from '@/utils/org-tenant'
 
 /** 当前登录主体信息（含 isSuper / 授权小区），用于页面级权限判断 */
 export function fetchGetUserInfo() {
@@ -33,6 +34,7 @@ export function fetchGetCommunityList(params: Record<string, any> = {}) {
 }
 
 /** 小区分页（useTable 结构） */
+
 export async function fetchCommunityPage(params: Record<string, any>) {
   const res = await fetchGetCommunityList(params)
   return toTablePage(res)
@@ -88,6 +90,7 @@ export function fetchGetDistrictTree() {
 }
 
 /** 行政区划逐级查询（级联懒加载）：parentId 为空时取省级 */
+
 export function fetchDistrictChildren(params: { parentId?: string; level?: number; keyword?: string } = {}) {
   return request.get<Property.DistrictOption[]>({
     url: '/api/v1/property/districts/children',
@@ -96,6 +99,7 @@ export function fetchDistrictChildren(params: { parentId?: string; level?: numbe
 }
 
 /** 按编码还原行政区划路径（省/市/区县/街道/社区） */
+
 export function fetchDistrictPath(code: string) {
   return request.get<Array<{ id: string; code: string; name: string; level: number }>>({
     url: '/api/v1/property/districts/path',
@@ -170,7 +174,7 @@ export async function fetchCommunityStatsPage(params: Record<string, any> = {}) 
 export async function fetchEmployeePage(params: Record<string, any>) {
   const res = await request.get<Property.Page<Property.Employee>>({
     url: '/api/v1/property/employees',
-    params: toPageQuery(params)
+    params: { ...toPageQuery(params), tenantId: currentOrgTenantId() || undefined }
   })
   return toTablePage(res)
 }
@@ -211,16 +215,23 @@ export function fetchGrantEmployeeCommunities(id: string, data: { communityIds: 
 }
 
 export function fetchGetEmployeeDeptTree() {
-  return request.get<Property.DeptNode[]>({ url: '/api/v1/property/employees/dept-tree' })
+  return request.get<Property.DeptNode[]>({
+    url: '/api/v1/property/employees/dept-tree',
+    params: { tenantId: currentOrgTenantId() || undefined }
+  })
 }
 
 export function fetchGetEmployeeRoles() {
-  return request.get<Property.Option[]>({ url: '/api/v1/property/employees/roles' })
+  return request.get<Property.Option[]>({
+    url: '/api/v1/property/employees/roles',
+    params: { tenantId: currentOrgTenantId() || undefined }
+  })
 }
 
 /* ------------------------------ 楼宇结构 ------------------------------ */
 
 /** 自定义层级树（层级管理/房屋管理页） */
+
 export function fetchNodeTree(communityId: string) {
   return request.get<Property.StructureNodeItem[]>({
     url: '/api/v1/property/nodes/tree',
@@ -229,6 +240,7 @@ export function fetchNodeTree(communityId: string) {
 }
 
 /** 层级下拉（房屋/设备选择） */
+
 export function fetchNodeOptions(communityId: string, leafOnly = false) {
   return request.get<Property.Option[]>({
     url: '/api/v1/property/nodes/options',
@@ -259,13 +271,6 @@ export function fetchDeleteNode(id: string) {
     url: `/api/v1/property/nodes/${id}`,
     successMessage: '删除成功',
     showSuccessMessage: true
-  })
-}
-
-export function fetchGetStructureTree(communityId: string) {
-  return request.get<Property.StructureNode[]>({
-    url: '/api/v1/property/structures/tree',
-    params: { communityId }
   })
 }
 
@@ -308,84 +313,6 @@ export function fetchBatchCreateHouses(data: Record<string, any>) {
     url: '/api/v1/property/structures/houses/batch',
     data,
     successMessage: '批量生成完成',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchCreateRegion(data: Record<string, any>) {
-  return request.post<{ id: string }>({
-    url: '/api/v1/property/structures/regions',
-    data,
-    successMessage: '区域创建成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchUpdateRegion(id: string, data: Record<string, any>) {
-  return request.put<null>({
-    url: `/api/v1/property/structures/regions/${id}`,
-    data,
-    successMessage: '保存成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchDeleteRegion(id: string) {
-  return request.del<null>({
-    url: `/api/v1/property/structures/regions/${id}`,
-    successMessage: '删除成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchCreateBuilding(data: Record<string, any>) {
-  return request.post<{ id: string }>({
-    url: '/api/v1/property/structures/buildings',
-    data,
-    successMessage: '楼栋创建成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchUpdateBuilding(id: string, data: Record<string, any>) {
-  return request.put<null>({
-    url: `/api/v1/property/structures/buildings/${id}`,
-    data,
-    successMessage: '保存成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchDeleteBuilding(id: string) {
-  return request.del<null>({
-    url: `/api/v1/property/structures/buildings/${id}`,
-    successMessage: '删除成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchCreateUnit(data: Record<string, any>) {
-  return request.post<{ id: string }>({
-    url: '/api/v1/property/structures/units',
-    data,
-    successMessage: '单元创建成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchUpdateUnit(id: string, data: Record<string, any>) {
-  return request.put<null>({
-    url: `/api/v1/property/structures/units/${id}`,
-    data,
-    successMessage: '保存成功',
-    showSuccessMessage: true
-  })
-}
-
-export function fetchDeleteUnit(id: string) {
-  return request.del<null>({
-    url: `/api/v1/property/structures/units/${id}`,
-    successMessage: '删除成功',
     showSuccessMessage: true
   })
 }
@@ -1053,3 +980,42 @@ export async function fetchAccountLogPage(params: Record<string, any>) {
   })
   return toTablePage(res)
 }
+
+export function fetchNodeChildren(communityId: string, parentId: string) {
+  return request.get<Property.TreeNodeChild[]>({
+    url: '/api/v1/property/nodes/children',
+    params: { communityId, parentId }
+  })
+}
+
+/** 层级信息卡片 */
+
+export function fetchNodeCard(nodeId: string) {
+  return request.get<Property.NodeCard>({ url: `/api/v1/property/nodes/${nodeId}/card` })
+}
+
+/** 房屋信息卡片（住户 + 车辆） */
+
+export function fetchHouseCard(houseId: string) {
+  return request.get<Property.HouseCard>({ url: `/api/v1/property/structures/houses/${houseId}/card` })
+}
+
+/** 小区信息卡片 */
+
+export function fetchCommunityCard(communityId: string) {
+  return request.get<Property.CommunityCard>({
+    url: '/api/v1/property/spaces/community-card',
+    params: { communityId }
+  })
+}
+
+/** 小区基础信息概览（楼栋/单元/楼层/房屋/面积） */
+
+export function fetchSpaceSummary(communityId: string) {
+  return request.get<Property.SpaceSummary>({
+    url: '/api/v1/property/spaces/summary',
+    params: { communityId }
+  })
+}
+
+/** 层级下拉（房屋/设备选择） */

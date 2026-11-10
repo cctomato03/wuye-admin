@@ -7,6 +7,7 @@
  * @module api/business
  */
 import request from '@/utils/http'
+import { currentOrgTenantId } from '@/utils/org-tenant'
 
 /** 分页参数转换：current/size → page/pageSize */
 export function toPageQuery(params: Record<string, any> = {}) {
@@ -33,13 +34,16 @@ export function toTablePage<T>(res: WebBasic.Page<T>) {
 /* ------------------------------- 部门 ------------------------------- */
 
 export function fetchGetDeptTree() {
-  return request.get<WebBasic.Dept[]>({ url: '/api/v1/system/depts/tree' })
+  return request.get<WebBasic.Dept[]>({
+    url: '/api/v1/system/depts/tree',
+    params: { tenantId: currentOrgTenantId() || undefined }
+  })
 }
 
 export function fetchCreateDept(data: Record<string, any>) {
   return request.post<{ id: string }>({
     url: '/api/v1/system/depts',
-    params: data,
+    params: { ...data, tenantId: data.tenantId || currentOrgTenantId() || undefined },
     successMessage: '新增成功',
     showSuccessMessage: true
   })
@@ -61,13 +65,16 @@ export function fetchDeleteDept(id: string | number) {
 /* ------------------------------- 岗位 ------------------------------- */
 
 export function fetchGetPostList() {
-  return request.get<WebBasic.Post[]>({ url: '/api/v1/system/posts' })
+  return request.get<WebBasic.Post[]>({
+    url: '/api/v1/system/posts',
+    params: { tenantId: currentOrgTenantId() || undefined }
+  })
 }
 
 export function fetchCreatePost(data: Record<string, any>) {
   return request.post<{ id: string }>({
     url: '/api/v1/system/posts',
-    params: data,
+    params: { ...data, tenantId: data.tenantId || currentOrgTenantId() || undefined },
     successMessage: '新增成功',
     showSuccessMessage: true
   })

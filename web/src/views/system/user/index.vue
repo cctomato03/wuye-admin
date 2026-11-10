@@ -9,6 +9,7 @@
       <!-- 表格头部 -->
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="refreshData">
         <template #left>
+        <OrgTenantSelector class="mr-2" @change="handleTenantChange" />
           <ElSpace wrap>
             <ElButton v-auth="'system:user:create'" @click="showDialog('add')" v-ripple>
               新增用户
@@ -78,6 +79,7 @@
 </template>
 
 <script setup lang="ts">
+  import OrgTenantSelector from '@/views/system/components/org-tenant-selector.vue'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import type { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
   import { useTable } from '@/hooks/core/useTable'
@@ -167,6 +169,8 @@
   const statusLoading = ref<string | number | null>(null)
 
   // 搜索表单
+  const handleTenantChange = () => refreshData()
+
   const searchForm = ref<{
     userName?: string
     userPhone?: string

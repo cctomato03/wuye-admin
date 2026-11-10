@@ -335,7 +335,7 @@ func (h *Handler) GrantEmployeeCommunities(c *gin.Context) {
 
 // EmployeeDeptTree 组织架构树。
 func (h *Handler) EmployeeDeptTree(c *gin.Context) {
-	tree, err := h.Svc.EmployeeDeptTree(c.Request.Context(), principal.Must(c))
+	tree, err := h.Svc.EmployeeDeptTree(c.Request.Context(), principal.Must(c), queryID(c, "tenantId"))
 	if err != nil {
 		response.Fail(c, err)
 		return
@@ -345,7 +345,7 @@ func (h *Handler) EmployeeDeptTree(c *gin.Context) {
 
 // EmployeeRoleOptions 员工可分配角色。
 func (h *Handler) EmployeeRoleOptions(c *gin.Context) {
-	list, err := h.Svc.RoleOptions(c.Request.Context(), principal.Must(c))
+	list, err := h.Svc.RoleOptions(c.Request.Context(), principal.Must(c), queryID(c, "tenantId"))
 	if err != nil {
 		response.Fail(c, err)
 		return

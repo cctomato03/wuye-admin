@@ -16,6 +16,7 @@
         @refresh="refreshData"
       >
         <template #left>
+        <OrgTenantSelector class="mr-2" @change="handleTenantChange" />
           <ElSpace wrap>
             <ElButton @click="showDialog('add')" v-ripple>新增角色</ElButton>
           </ElSpace>
@@ -52,6 +53,7 @@
 </template>
 
 <script setup lang="ts">
+  import OrgTenantSelector from '@/views/system/components/org-tenant-selector.vue'
   import { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
   import { useTable } from '@/hooks/core/useTable'
   import { fetchGetRoleList, fetchDeleteRole } from '@/api/system-manage'
@@ -68,6 +70,8 @@
   type RoleSearchFormParams = Api.SystemManage.RoleSearchParams
 
   // 搜索表单
+  const handleTenantChange = () => refreshData()
+
   const searchForm = ref<RoleSearchFormParams>({
     roleName: undefined,
     roleCode: undefined,

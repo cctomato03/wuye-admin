@@ -182,12 +182,12 @@ func (s *Service) houseBelongsTo(ctx context.Context, communityID, houseID uint6
 	return &h, nil
 }
 
-// buildingBelongsTo 校验楼栋属于指定小区。
-func (s *Service) buildingBelongsTo(ctx context.Context, communityID, buildingID uint64) (*entity.Building, error) {
+// buildingBelongsTo 校验楼栋/空间节点属于指定小区。
+func (s *Service) buildingBelongsTo(ctx context.Context, communityID, buildingID uint64) (*entity.StructureNode, error) {
 	if buildingID == 0 {
 		return nil, nil
 	}
-	var b entity.Building
+	var b entity.StructureNode
 	if err := s.Repo.DB.WithContext(ctx).Where("id = ? AND community_id = ?", buildingID, communityID).First(&b).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.Invalid("楼栋不存在或不属于当前小区")

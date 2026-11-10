@@ -21,22 +21,28 @@ import (
 	"web-basic/internal/repository"
 	"web-basic/pkg/errs"
 	"web-basic/pkg/id"
+	"web-basic/pkg/jsonx"
 )
 
 // ============================ 岗位 ============================
 
 // PostReq 岗位入参。
 type PostReq struct {
-	Code   string `json:"code" binding:"required,max=64"`
-	Name   string `json:"name" binding:"required,max=64"`
-	Sort   int    `json:"sort"`
-	Status int    `json:"status"`
-	Remark string `json:"remark"`
+	TenantID jsonx.Uint64 `json:"tenantId"`
+	Code     string       `json:"code" binding:"required,max=64"`
+	Name     string       `json:"name" binding:"required,max=64"`
+	Sort     int          `json:"sort"`
+	Status   int          `json:"status"`
+	Remark   string       `json:"remark"`
 }
 
 // ListPosts 岗位列表。
-func (s *Service) ListPosts(ctx context.Context, p *principal.Info) ([]entity.Post, error) {
-	list, err := s.Repo.ListPosts(ctx, p.TenantID)
+func (s *Service) ListPosts(ctx context.Context, p *principal.Info, tenantID uint64) ([]entity.Post, error) {
+	tid, err := s.OrgTenant(ctx, p, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	list, err := s.Repo.ListPosts(ctx, tid)
 	if err != nil {
 		return nil, errs.ErrDB.WithErr(err)
 	}
@@ -45,6 +51,10 @@ func (s *Service) ListPosts(ctx context.Context, p *principal.Info) ([]entity.Po
 
 // CreatePost 新增岗位。
 func (s *Service) CreatePost(ctx context.Context, req *PostReq, p *principal.Info) (uint64, error) {
+	tid, err := s.OrgTenant(ctx, p, req.TenantID.Uint64())
+	if err != nil {
+		return 0, err
+	}
 	now := time.Now()
 	post := &entity.Post{
 		BaseLite: entity.BaseLite{ID: id.Next(), CreateTime: now, UpdateTime: &now, Remark: req.Remark},
@@ -52,7 +62,7 @@ func (s *Service) CreatePost(ctx context.Context, req *PostReq, p *principal.Inf
 		Name:     req.Name,
 		Sort:     req.Sort,
 		Status:   req.Status,
-		TenantID: p.TenantID,
+		TenantID: tid,
 	}
 	if err := s.Repo.DB.WithContext(ctx).Create(post).Error; err != nil {
 		return 0, errs.ErrDB.WithErr(err)
@@ -62,10 +72,14 @@ func (s *Service) CreatePost(ctx context.Context, req *PostReq, p *principal.Inf
 
 // UpdatePost 修改岗位。
 func (s *Service) UpdatePost(ctx context.Context, postID uint64, req *PostReq, p *principal.Info) error {
-	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Post{}).Where("id = ?", postID)
-	if p != nil && p.TenantID != 0 {
-		tx = tx.Where("tenant_id = ?", p.TenantID)
+	var exist entity.Post
+	if err := s.Repo.DB.WithContext(ctx).Where("id = ?", postID).First(&exist).Error; err != nil {
+		return errs.ErrNotFound
 	}
+	if err := s.AssertTenantAllowed(ctx, p, exist.TenantID); err != nil {
+		return err
+	}
+	tx := s.Repo.DB.WithContext(ctx).Model(&entity.Post{}).Where("id = ? AND tenant_id = ?", postID, exist.TenantID)
 	err := repository.Result(tx.Updates(map[string]any{
 		"code": req.Code, "name": req.Name, "sort": req.Sort, "status": req.Status, "remark": req.Remark,
 	}))
@@ -78,12 +92,11 @@ func (s *Service) UpdatePost(ctx context.Context, postID uint64, req *PostReq, p
 // DeletePost 删除岗位。
 func (s *Service) DeletePost(ctx context.Context, postID uint64, p *principal.Info) error {
 	var post entity.Post
-	tx := s.Repo.DB.WithContext(ctx).Where("id = ?", postID)
-	if p != nil && p.TenantID != 0 {
-		tx = tx.Where("tenant_id = ?", p.TenantID)
-	}
-	if err := tx.First(&post).Error; err != nil {
+	if err := s.Repo.DB.WithContext(ctx).Where("id = ?", postID).First(&post).Error; err != nil {
 		return errs.ErrNotFound
+	}
+	if err := s.AssertTenantAllowed(ctx, p, post.TenantID); err != nil {
+		return err
 	}
 	if err := repository.Result(s.Repo.DB.WithContext(ctx).Delete(&entity.Post{}, postID)); err != nil {
 		return errs.ErrDB.WithErr(err)

@@ -12,138 +12,6 @@ import (
 // ============================ 区域 / 楼栋 / 单元 ============================
 
 // CreateRegion 新增区域。
-func (h *Handler) CreateRegion(c *gin.Context) {
-	var req service.RegionReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	id, err := h.Svc.CreateRegion(c.Request.Context(), &req, principal.Must(c))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OkID(c, id)
-}
-
-// UpdateRegion 修改区域。
-func (h *Handler) UpdateRegion(c *gin.Context) {
-	id, ok := pathID(c)
-	if !ok {
-		return
-	}
-	var req service.RegionReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := h.Svc.UpdateRegion(c.Request.Context(), id, &req, principal.Must(c)); err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.Ok(c)
-}
-
-// DeleteRegion 删除区域。
-func (h *Handler) DeleteRegion(c *gin.Context) {
-	id, ok := pathID(c)
-	if !ok {
-		return
-	}
-	if err := h.Svc.DeleteRegion(c.Request.Context(), id, principal.Must(c)); err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.Ok(c)
-}
-
-// CreateBuilding 新增楼栋。
-func (h *Handler) CreateBuilding(c *gin.Context) {
-	var req service.BuildingReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	id, err := h.Svc.CreateBuilding(c.Request.Context(), &req, principal.Must(c))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OkID(c, id)
-}
-
-// UpdateBuilding 修改楼栋。
-func (h *Handler) UpdateBuilding(c *gin.Context) {
-	id, ok := pathID(c)
-	if !ok {
-		return
-	}
-	var req service.BuildingReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := h.Svc.UpdateBuilding(c.Request.Context(), id, &req, principal.Must(c)); err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.Ok(c)
-}
-
-// DeleteBuilding 删除楼栋。
-func (h *Handler) DeleteBuilding(c *gin.Context) {
-	id, ok := pathID(c)
-	if !ok {
-		return
-	}
-	if err := h.Svc.DeleteBuilding(c.Request.Context(), id, principal.Must(c)); err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.Ok(c)
-}
-
-// CreateUnit 新增单元。
-func (h *Handler) CreateUnit(c *gin.Context) {
-	var req service.UnitReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	id, err := h.Svc.CreateUnit(c.Request.Context(), &req, principal.Must(c))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OkID(c, id)
-}
-
-// UpdateUnit 修改单元。
-func (h *Handler) UpdateUnit(c *gin.Context) {
-	id, ok := pathID(c)
-	if !ok {
-		return
-	}
-	var req service.UnitReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := h.Svc.UpdateUnit(c.Request.Context(), id, &req, principal.Must(c)); err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.Ok(c)
-}
-
-// DeleteUnit 删除单元。
-func (h *Handler) DeleteUnit(c *gin.Context) {
-	id, ok := pathID(c)
-	if !ok {
-		return
-	}
-	if err := h.Svc.DeleteUnit(c.Request.Context(), id, principal.Must(c)); err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.Ok(c)
-}
-
-// NodeTree 自定义层级树（层级管理页）。
 func (h *Handler) NodeTree(c *gin.Context) {
 	cid := queryID(c, "communityId")
 	tree, err := h.Svc.NodeTree(c.Request.Context(), cid, principal.Must(c))
@@ -198,6 +66,57 @@ func (h *Handler) DeleteNode(c *gin.Context) {
 	response.Ok(c)
 }
 
+// NodeCard 层级信息卡片。
+func (h *Handler) NodeCard(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	card, err := h.Svc.NodeCard(c.Request.Context(), id, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, card)
+}
+
+// NodeChildren 树懒加载：子层级 + 直接挂载房屋（parentId=0 表示小区根级）。
+func (h *Handler) NodeChildren(c *gin.Context) {
+	cid := queryID(c, "communityId")
+	parentID := queryID(c, "parentId")
+	list, err := h.Svc.NodeChildren(c.Request.Context(), cid, parentID, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, list)
+}
+
+// HouseCard 房屋信息卡片（住户 + 车辆）。
+func (h *Handler) HouseCard(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	card, err := h.Svc.HouseCard(c.Request.Context(), id, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, card)
+}
+
+// CommunityCard 小区信息卡片。
+func (h *Handler) CommunityCard(c *gin.Context) {
+	cid := queryID(c, "communityId")
+	card, err := h.Svc.CommunityCard(c.Request.Context(), cid, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, card)
+}
+
 // NodeOptions 层级下拉（房屋/设备选择用）。
 func (h *Handler) NodeOptions(c *gin.Context) {
 	cid := queryID(c, "communityId")
@@ -210,20 +129,6 @@ func (h *Handler) NodeOptions(c *gin.Context) {
 	response.OkData(c, list)
 }
 
-// StructureTree 楼宇结构树。
-func (h *Handler) StructureTree(c *gin.Context) {
-	cid := queryID(c, "communityId")
-	tree, err := h.Svc.StructureTree(c.Request.Context(), cid, principal.Must(c))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OkData(c, tree)
-}
-
-// ============================ 房屋 ============================
-
-// ListHouses 房屋列表。
 func (h *Handler) ListHouses(c *gin.Context) {
 	var q service.HouseQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
@@ -355,9 +260,32 @@ func (h *Handler) DeleteHouseType(c *gin.Context) {
 
 // ============================ 结构导入 ============================
 
+// SpaceSummary 小区基础信息概览（楼栋/单元/楼层/房屋/面积）。
+func (h *Handler) SpaceSummary(c *gin.Context) {
+	cid := queryID(c, "communityId")
+	vo, err := h.Svc.SpaceSummary(c.Request.Context(), cid, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, vo)
+}
+
+// ExportSpaceHouses 导出小区基础信息（层级+房屋）。
+func (h *Handler) ExportSpaceHouses(c *gin.Context) {
+	cid := queryID(c, "communityId")
+	nodeID := queryID(c, "nodeId")
+	data, name, err := h.Svc.SpaceExport(c.Request.Context(), cid, nodeID, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	writeExcel(c, data, name)
+}
+
 // StructureImportTemplate 楼宇结构导入模板。
 func (h *Handler) StructureImportTemplate(c *gin.Context) {
-	data, err := h.Svc.StructureImportTemplate()
+	data, err := h.Svc.SpaceImportTemplate()
 	if err != nil {
 		response.Fail(c, err)
 		return

@@ -20,6 +20,21 @@ type UserQuery struct {
 	Mobile   string `form:"mobile"`
 	Status   *int   `form:"status"`
 	DeptID   uint64 `form:"deptId"`
+	// TenantID 由 service 解析后的目标租户（平台默认租户可切换物业公司）；
+	// 为空时按登录主体租户过滤。
+	TenantID uint64 `form:"tenantId"`
+}
+
+// FindUsersByIDs 批量按 ID 查询用户（一次 IN 查询，避免在线用户等场景的 N+1）。
+func (r *Repo) FindUsersByIDs(ctx context.Context, ids []uint64) ([]entity.User, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var list []entity.User
+	if err := r.DB.WithContext(ctx).Model(&entity.User{}).Where("id IN ?", ids).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
 // FindUserByID 按 ID 查询用户。
@@ -57,8 +72,13 @@ func (r *Repo) FindUserByUsername(ctx context.Context, tenantID uint64, username
 // ListUsers 分页查询用户（自动套用租户与数据权限）。
 func (r *Repo) ListUsers(ctx context.Context, q *UserQuery, p *principal.Info, deptIDs []uint64) ([]entity.User, int64, error) {
 	q.Normalize()
-	tx := r.DB.WithContext(ctx).Model(&entity.User{}).
-		Scopes(scope.Tenant(p.TenantID), scope.DataScope(p, "dept_id", "create_by"))
+	tx := r.DB.WithContext(ctx).Model(&entity.User{})
+	if q.TenantID != 0 && q.TenantID != p.TenantID {
+		// 平台管理角色切换到其它物业公司：只按目标租户过滤，不再叠加本公司数据范围
+		tx = tx.Where("tenant_id = ?", q.TenantID)
+	} else {
+		tx = tx.Scopes(scope.Tenant(p.TenantID), scope.DataScope(p, "dept_id", "create_by"))
+	}
 
 	if q.Username != "" {
 		tx = tx.Where("username LIKE ? OR nickname LIKE ?", q.Username+"%", q.Username+"%")

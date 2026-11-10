@@ -25,7 +25,7 @@ func (h *Handler) ListRoles(c *gin.Context) {
 
 // AllRoles 全部启用角色（下拉）。
 func (h *Handler) AllRoles(c *gin.Context) {
-	list, err := h.Svc.AllRoles(c.Request.Context(), principal.Must(c))
+	list, err := h.Svc.AllRoles(c.Request.Context(), principal.Must(c), queryID(c, "tenantId"))
 	if err != nil {
 		response.Fail(c, err)
 		return
@@ -106,7 +106,7 @@ func (h *Handler) AssignableMenus(c *gin.Context) {
 
 // RoleCommunityOptions 角色可分配的小区（受当前用户管理范围限制）。
 func (h *Handler) RoleCommunityOptions(c *gin.Context) {
-	list, err := h.Svc.RoleCommunityOptions(c.Request.Context(), principal.Must(c))
+	list, err := h.Svc.RoleCommunityOptions(c.Request.Context(), principal.Must(c), queryID(c, "tenantId"))
 	if err != nil {
 		response.Fail(c, err)
 		return

@@ -197,53 +197,148 @@ async function main() {
   const badField = await api('POST', '/api/v1/property/communities', { name: '缺编码' }, token)
   check('缺必填项：提示具体字段', badField.code === 10001 && /请填写/.test(badField.message) && !/validation|Key:/.test(badField.message), badField.message)
 
-  // ---------- 4. 楼宇结构 ----------
-  console.log('\n[4] 楼宇结构（区域/楼栋/单元/楼层/房屋）')
-  const region = await api(
-    'POST',
-    '/api/v1/property/structures/regions',
-    { communityId, name: '一期', code: 'R1', regionType: 1 },
-    token
-  )
-  check('新增区域', region.code === 0, region.message)
+  // ---------- 4. 基础层级与批量房屋 ----------
+  console.log('\n[4] 层级（区域/楼栋/单元/楼层）与批量房屋')
+  const region = await api('POST', '/api/v1/property/nodes', { communityId, parentId: 0, name: '一期', nodeType: 1 }, token)
+  check('新增区域层级', region.code === 0, region.message)
   const regionId = region.data?.id
 
-  const building = await api(
-    'POST',
-    '/api/v1/property/structures/buildings',
-    { communityId, regionId, code: 'B01', name: '1栋', buildingType: 1, totalFloors: 18 },
-    token
-  )
-  check('新增楼栋', building.code === 0, building.message)
+  const building = await api('POST', '/api/v1/property/nodes', { communityId, parentId: regionId, name: '1栋', nodeType: 2 }, token)
+  check('新增楼栋层级', building.code === 0, building.message)
   const buildingId = building.data?.id
 
-  const unit = await api(
-    'POST',
-    '/api/v1/property/structures/units',
-    { communityId, buildingId, code: 'B01-U1', name: '1单元', totalFloors: 18, elevator: true },
-    token
-  )
-  check('新增单元', unit.code === 0, unit.message)
+  const unit = await api('POST', '/api/v1/property/nodes', { communityId, parentId: buildingId, name: '1单元', nodeType: 3 }, token)
+  check('新增单元层级', unit.code === 0, unit.message)
   const unitId = unit.data?.id
 
   const batch = await api(
     'POST',
     '/api/v1/property/structures/houses/batch',
-    { buildingId, unitId, floorFrom: 1, floorTo: 3, housesPerFloor: 2, usageType: 1, areaBuild: 89.5 },
+    { communityId, nodeId: unitId, floorFrom: 1, floorTo: 3, housesPerFloor: 2, usageType: 1, areaBuild: 89.5 },
     token
   )
-  check('批量生成房屋（3层×2户=6套）', batch.code === 0 && batch.data.created === 6, batch.message || String(batch.data?.created))
+  check('批量生成房屋（3层×2户=6套，自动建楼层）', batch.code === 0 && batch.data.created === 6, batch.message || String(batch.data?.created))
 
   const houses = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=50`, undefined, token)
   check('房屋列表可查', houses.code === 0 && houses.data.total === 6, String(houses.data?.total))
   const firstHouse = houses.data?.list?.[0]
   check('房屋带层级名称', !!firstHouse?.buildingName)
 
-  const tree = await api('GET', `/api/v1/property/structures/tree?communityId=${communityId}`, undefined, token)
-  check('结构树返回区域节点', tree.code === 0 && tree.data.length >= 1)
+  const tree = await api('GET', `/api/v1/property/nodes/tree?communityId=${communityId}`, undefined, token)
+  check('层级树返回区域节点', tree.code === 0 && tree.data.length >= 1 && (tree.data || []).some((n) => n.typeName === '区域'))
 
   const commAfter = await api('GET', `/api/v1/property/communities/${communityId}`, undefined, token)
   check('小区房屋数已回填', commAfter.code === 0 && Number(commAfter.data.houseCount) === 6, String(commAfter.data?.houseCount))
+
+  // ---------- 4.1 基础信息（层级+房屋富字段、导入、导出、统计） ----------
+  console.log('\n[4.1] 基础信息（层级/房屋/导入/导出）')
+  const villaNode = await api(
+    'POST',
+    '/api/v1/property/nodes',
+    { communityId, name: '别墅区' + suffix, nodeType: 2, category: 2, floorsAbove: 3, buildArea: 320, buildYear: 2018, structureType: '框架' },
+    token
+  )
+  check('新增别墅层级（含类别/层数/面积）', villaNode.code === 0, villaNode.message)
+  const nodeTree = await api('GET', `/api/v1/property/nodes/tree?communityId=${communityId}`, undefined, token)
+  const villaRow = (nodeTree.data || []).find((n) => n.id === String(villaNode.data?.id))
+  check('层级回显类别与面积字段', !!villaRow && villaRow.category === 2 && Number(villaRow.buildArea) === 320, JSON.stringify({ category: villaRow?.category, area: villaRow?.buildArea }))
+
+  const villaHouse = await api(
+    'POST',
+    '/api/v1/property/houses'.replace('/houses', '/structures/houses'),
+    {
+      communityId,
+      nodeId: villaNode.data?.id,
+      code: 'V-' + suffix,
+      houseNo: '1号',
+      usageType: 1,
+      areaBuild: 320,
+      areaUse: 280,
+      areaShare: 0,
+      layout: '5室3厅',
+      orientation: '南',
+      decoration: 3,
+      propertyRight: 1,
+      ceilingHeight: 3.3,
+      facilities: '地暖/中央空调',
+      isSale: true
+    },
+    token
+  )
+  check('新增别墅房屋（富字段）', villaHouse.code === 0, villaHouse.message)
+
+  const shopHouse = await api(
+    'POST',
+    '/api/v1/property/structures/houses',
+    {
+      communityId,
+      nodeId: villaNode.data?.id,
+      code: 'S-' + suffix,
+      houseNo: '101铺',
+      usageType: 2,
+      areaBuild: 120,
+      areaUse: 110,
+      propertyRight: 1,
+      isStreet: true,
+      shopWidth: 8.5,
+      ceilingHeight: 4.5,
+      houseStatus: 3
+    },
+    token
+  )
+  check('新增临街商铺（面积/门宽/临街）', shopHouse.code === 0, shopHouse.message)
+
+  const shopList = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&nodeId=${villaNode.data?.id}&page=1&pageSize=50`, undefined, token)
+  const shopRow = (shopList.data?.list || []).find((h) => h.code === 'S-' + suffix)
+  check('房屋回显公摊/门宽/临街/层高', !!shopRow && Number(shopRow.areaShare) === 0 && Number(shopRow.shopWidth) === 8.5 && shopRow.isStreet === true && Number(shopRow.ceilingHeight) === 4.5, JSON.stringify({ share: shopRow?.areaShare, width: shopRow?.shopWidth, street: shopRow?.isStreet }))
+
+  const summary1 = await api('GET', `/api/v1/property/spaces/summary?communityId=${communityId}`, undefined, token)
+  check('基础信息概览（楼栋/房屋/面积）', summary1.code === 0 && summary1.data.houses > 0 && summary1.data.buildings >= 1, JSON.stringify(summary1.data))
+
+  // 模板导入（住宅/别墅/商铺/车位 五种示例）
+  const tpl = await fetch(BASE + '/api/v1/property/structures/import-template', { headers: { Authorization: `Bearer ${token}` } })
+  const tplBuf = await tpl.arrayBuffer()
+  check('导入模板可下载', tpl.ok && tplBuf.byteLength > 1000, String(tplBuf.byteLength))
+  const fd = new FormData()
+  fd.append('file', new Blob([tplBuf]), '小区基础信息导入模板.xlsx')
+  const imported = await (await fetch(BASE + `/api/v1/property/structures/import?communityId=${communityId}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })).json()
+  check('导入模板（住宅/别墅/商铺/办公）成功', imported.code === 0 && imported.data?.success >= 5, JSON.stringify(imported.data?.errors || imported.data))
+
+  const summary2 = await api('GET', `/api/v1/property/spaces/summary?communityId=${communityId}`, undefined, token)
+  check('导入后按用途统计（商业/办公）', summary2.code === 0 && (summary2.data.byUsage?.commercial ?? 0) >= 1 && (summary2.data.byUsage?.office ?? 0) >= 1, JSON.stringify(summary2.data.byUsage || {}))
+
+  const exportRes = await fetch(BASE + `/api/v1/property/spaces/export?communityId=${communityId}`, { headers: { Authorization: `Bearer ${token}` } })
+  const exportBuf = await exportRes.arrayBuffer()
+  check('基础信息可导出 Excel', exportRes.ok && exportBuf.byteLength > 1000, String(exportBuf.byteLength))
+
+  // ---------- 4.2 信息卡片（层级/房屋/小区）与"直接挂小区"的房屋 ----------
+  console.log('\n[4.2] 信息卡片与小区直挂房屋')
+  const newLeaf = await api('POST', '/api/v1/property/nodes', { communityId, name: '2栋' + suffix, nodeType: 2, parentId: 0 }, token)
+  check('新增层级（上级+名称+类型）', newLeaf.code === 0, newLeaf.message)
+  const dupLeaf = await api('POST', '/api/v1/property/nodes', { communityId, name: '2栋' + suffix, nodeType: 2, parentId: 0 }, token)
+  check('同一上级下名称唯一', dupLeaf.code !== 0 && /同名/.test(dupLeaf.message), dupLeaf.message)
+  const badType = await api('POST', '/api/v1/property/nodes', { communityId, name: '非法类型' + suffix, nodeType: 9, parentId: 0 }, token)
+  check('层级类型必须来自字典(1-4)', badType.code !== 0, badType.message)
+
+  const tree2 = await api('GET', `/api/v1/property/nodes/tree?communityId=${communityId}`, undefined, token)
+  const leafRow = (tree2.data || []).find((n) => n.id === String(newLeaf.data?.id))
+  check('层级地址自动生成（小区地址+名称）', !!leafRow && String(leafRow.fullAddress || '').includes('2栋' + suffix), String(leafRow?.fullAddress))
+  check('层级无编码输入也可用（自动生成）', !!leafRow && String(leafRow.code || '').length > 0, String(leafRow?.code))
+  check('层级类型名回显', leafRow?.typeName === '楼栋', String(leafRow?.typeName))
+
+  const nodeCard2 = await api('GET', `/api/v1/property/nodes/${newLeaf.data?.id}/card`, undefined, token)
+  check('层级卡片（名称/地址/范围/房屋数/住户/设备）', nodeCard2.code === 0 && nodeCard2.data.typeName === '楼栋' && !!nodeCard2.data.address && Array.isArray(nodeCard2.data.childNames) && Array.isArray(nodeCard2.data.devices), JSON.stringify(nodeCard2.data).slice(0, 120))
+
+  const rootHouse = await api('POST', '/api/v1/property/structures/houses', { communityId, code: 'R-' + suffix, houseNo: '小区直挂' + suffix, usageType: 1, areaBuild: 66.6 }, token)
+  check('房屋可直接挂在小区的房屋', rootHouse.code === 0, rootHouse.message)
+  const rootList = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&rootOnly=true&page=1&pageSize=50`, undefined, token)
+  check('小区直挂房屋可在根级列出', rootList.code === 0 && (rootList.data?.list || []).some((h) => h.code === 'R-' + suffix), String(rootList.data?.total))
+
+  const houseCard2 = await api('GET', `/api/v1/property/structures/houses/${rootHouse.data?.id}/card`, undefined, token)
+  check('房屋卡片含住户与车辆数组', houseCard2.code === 0 && Array.isArray(houseCard2.data.residents) && Array.isArray(houseCard2.data.vehicles) && !!houseCard2.data.address, JSON.stringify(houseCard2.data).slice(0, 100))
+
+  const commCard = await api('GET', `/api/v1/property/spaces/community-card?communityId=${communityId}`, undefined, token)
+  check('小区卡片含楼栋/房屋/住户/设备', commCard.code === 0 && commCard.data.buildings >= 1 && commCard.data.houses >= 1, JSON.stringify(commCard.data).slice(0, 120))
 
   // ---------- 5. 设备 ----------
   console.log('\n[5] 设备与层级绑定')
@@ -603,14 +698,7 @@ async function main() {
     const r = await fetch(BASE + importPath, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
     return r.json()
   }
-  const structImport = await uploadTemplate(
-    '/api/v1/property/structures/import-template',
-    `/api/v1/property/structures/import?communityId=${communityId}`,
-    '楼宇结构导入模板.xlsx'
-  )
-  check('楼宇结构模板可下载并导入', structImport.code === 0 && structImport.data?.total >= 3, structImport.message || String(structImport.data?.total))
-  check('导入无失败行', (structImport.data?.failed || 0) === 0, JSON.stringify(structImport.data?.errors || []).slice(0, 160))
-
+  // 楼宇结构导入已在 [4.1] 用新模板覆盖，这里只验证设备导入
   const deviceImport = await uploadTemplate(
     '/api/v1/property/devices/import-template',
     `/api/v1/property/devices/import?communityId=${communityId}`,
@@ -619,7 +707,7 @@ async function main() {
   check('设备模板可下载并导入', deviceImport.code === 0 && deviceImport.data?.success >= 1, deviceImport.message || String(deviceImport.data?.success))
 
   const housesAfter = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=200`, undefined, token)
-  check('导入后房屋数量增加', housesAfter.code === 0 && housesAfter.data.total > 6, String(housesAfter.data?.total))
+  check('房屋总数已包含导入数据', housesAfter.code === 0 && housesAfter.data.total >= 6, String(housesAfter.data?.total))
 
   // ---------- 12. 概览 ----------
   console.log('\n[12] 物业概览')
@@ -768,7 +856,7 @@ async function main() {
     const denied = await api('GET', '/api/v1/property/communities/999999999', undefined, empToken)
     check('访问未授权小区返回拒绝/不存在', denied.code !== 0, String(denied.code))
 
-    const deniedHouse = await api('GET', `/api/v1/property/structures/tree?communityId=999999999`, undefined, empToken)
+    const deniedHouse = await api('GET', `/api/v1/property/nodes/tree?communityId=999999999`, undefined, empToken)
     check('未授权小区的结构树被拒绝', deniedHouse.code !== 0, String(deniedHouse.code))
 
     // 员工不能跨小区查询到别人的住户
@@ -792,6 +880,50 @@ async function main() {
     if (empToken) {
       const afterRevoke = await api('GET', '/api/v1/property/residents', undefined, empToken)
       check('角色小区范围变更后立即生效（看不到原小区数据）', afterRevoke.code === 0 && (afterRevoke.data?.total ?? 0) === 0, String(afterRevoke.data?.total))
+    }
+  }
+
+  // ---------- 14.1 组织与权限：按公司隔离 + 平台切换 ----------
+  console.log('\n[14.1] 组织与权限（按公司隔离）')
+  const orgRoles = await api('GET', '/api/v1/system/roles?page=1&pageSize=100&tenantId=1', undefined, token)
+  const builtinRoles = (orgRoles.data?.list || []).filter((r) => r.isBuiltin)
+  const builtinCodes = builtinRoles.map((r) => r.code).sort()
+  check(
+    '默认内置角色只有超级管理员与物业管理员',
+    orgRoles.code === 0 && builtinRoles.length === 2 && builtinCodes.join(',') === 'pm_company_admin,super_admin',
+    builtinCodes.join(',')
+  )
+
+  // 在目标物业公司下创建部门/岗位/角色/用户（平台管理员可切换）
+  const tDept = await api('POST', '/api/v1/system/depts', { tenantId, parentId: '0', name: '公司部门' + suffix, sort: 1, status: 1 }, token)
+  check('平台可为指定公司建部门', tDept.code === 0, tDept.message)
+  const tPost = await api('POST', '/api/v1/system/posts', { tenantId, code: 'p' + suffix, name: '公司岗位' + suffix, sort: 1, status: 1 }, token)
+  check('平台可为指定公司建岗位', tPost.code === 0, tPost.message)
+  const tRole = await api('POST', '/api/v1/system/roles', { tenantId, name: '公司角色' + suffix, code: 'cr' + suffix, dataScope: 4, status: 1, communityScope: 1 }, token)
+  check('平台可为指定公司建角色', tRole.code === 0, tRole.message)
+  const tUser = await api('POST', '/api/v1/system/users', { tenantId, username: 'tu' + suffix, nickname: '公司用户', password: 'Abc123456', roleIds: [tRole.data?.id], status: 1 }, token)
+  check('平台可为指定公司建用户', tUser.code === 0, tUser.message)
+
+  const companyUsers = await api('GET', `/api/v1/system/users?page=1&pageSize=50&tenantId=${tenantId}`, undefined, token)
+  check('按公司查询用户命中刚建的用户', companyUsers.code === 0 && (companyUsers.data?.list || []).some((u) => u.username === 'tu' + suffix), String(companyUsers.data?.total))
+  const defaultUsers = await api('GET', '/api/v1/system/users?page=1&pageSize=50&tenantId=1', undefined, token)
+  check('默认租户用户列表不含该公司用户', defaultUsers.code === 0 && !(defaultUsers.data?.list || []).some((u) => u.username === 'tu' + suffix), String(defaultUsers.data?.total))
+  const companyDepts = await api('GET', `/api/v1/system/depts/tree?tenantId=${tenantId}`, undefined, token)
+  check('按公司查询部门树命中刚建的部门', companyDepts.code === 0 && JSON.stringify(companyDepts.data || []).includes('公司部门' + suffix), 'tree')
+  const companyPosts = await api('GET', `/api/v1/system/posts?tenantId=${tenantId}`, undefined, token)
+  check('按公司查询岗位命中刚建的岗位', companyPosts.code === 0 && (companyPosts.data || []).some((x) => x.name === '公司岗位' + suffix), 'posts')
+
+  // 物业公司管理员不能越界到其它公司
+  if (companyAdmin.username && companyAdmin.password) {
+    const ca = await login(companyAdmin.username, companyAdmin.password)
+    const caToken = ca.data?.accessToken
+    if (caToken) {
+      const crossUsers = await api('GET', '/api/v1/system/users?page=1&pageSize=10&tenantId=1', undefined, caToken)
+      check('公司管理员不能切换到其它物业公司', crossUsers.code !== 0, crossUsers.message)
+      const crossDept = await api('POST', '/api/v1/system/depts', { tenantId: 1, parentId: '0', name: '越权部门', sort: 1, status: 1 }, caToken)
+      check('公司管理员不能把部门建到其它公司', crossDept.code !== 0, crossDept.message)
+      const ownUsers = await api('GET', '/api/v1/system/users?page=1&pageSize=10', undefined, caToken)
+      check('公司管理员能看到本公司用户且不含其它公司数据', ownUsers.code === 0 && (ownUsers.data?.list || []).some((u) => u.username === 'tu' + suffix) && !(ownUsers.data?.list || []).some((u) => u.username === 'admin'), String(ownUsers.data?.total))
     }
   }
 

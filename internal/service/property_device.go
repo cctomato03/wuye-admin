@@ -294,25 +294,33 @@ func (s *Service) ImportDevices(ctx context.Context, communityID uint64, r io.Re
 	if len(rows) <= 1 {
 		return nil, errs.Invalid("文件没有数据行")
 	}
-	// 楼栋/区域/单元/楼层编码映射，便于导入时按编码绑定
+	// 空间节点编码映射，便于导入时按编码/名称绑定
 	buildingMap := map[string]uint64{}
 	regionMap := map[string]uint64{}
 	unitMap := map[string]uint64{}
 	{
-		var bs []entity.Building
-		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Building{}).Select("id, code").Where("community_id = ?", communityID).Find(&bs).Error
-		for _, b := range bs {
-			buildingMap[b.Code] = b.ID
-		}
-		var rs []entity.Region
-		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Region{}).Select("id, code").Where("community_id = ?", communityID).Find(&rs).Error
-		for _, rg := range rs {
-			regionMap[rg.Code] = rg.ID
-		}
-		var us []entity.Unit
-		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Unit{}).Select("id, code").Where("community_id = ?", communityID).Find(&us).Error
-		for _, u := range us {
-			unitMap[u.Code] = u.ID
+		var nodes []entity.StructureNode
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).
+			Select("id, code, name, node_type").Where("community_id = ?", communityID).Find(&nodes).Error
+		for _, n := range nodes {
+			switch n.NodeType {
+			case 1:
+				regionMap[n.Code] = n.ID
+			case 2:
+				buildingMap[n.Code] = n.ID
+			case 3:
+				unitMap[n.Code] = n.ID
+			}
+			// 允许按名称绑定（表格里通常写"1栋"而不是编码）
+			if _, ok := buildingMap[n.Name]; !ok {
+				buildingMap[n.Name] = n.ID
+			}
+			if _, ok := regionMap[n.Name]; !ok {
+				regionMap[n.Name] = n.ID
+			}
+			if _, ok := unitMap[n.Name]; !ok {
+				unitMap[n.Name] = n.ID
+			}
 		}
 	}
 	res := &DeviceImportResult{Errors: []string{}}

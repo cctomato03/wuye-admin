@@ -17,7 +17,6 @@ help:
 	@echo "make test          运行后端测试与 vet"
 	@echo "make docker        构建镜像 web-basic:latest"
 	@echo "make up / down     docker compose 启停（MySQL8 + Redis）"
-	@echo "make up57 / down57 docker compose 启停（MySQL5.7 变体）"
 
 web-install:
 	cd web && pnpm install
@@ -48,8 +47,3 @@ up:
 down:
 	docker compose -f deploy/docker-compose.yml down
 
-up57:
-	docker compose -f deploy/docker-compose.mysql57.yml up -d --build
-
-down57:
-	docker compose -f deploy/docker-compose.mysql57.yml down
