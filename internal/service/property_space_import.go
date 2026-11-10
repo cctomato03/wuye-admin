@@ -5,9 +5,10 @@
 //
 //	湖北省武汉市江岸区黄浦大街25号黄浦雅苑1栋4单元1楼1号
 //
-// 其中"湖北省武汉市江岸区黄浦大街25号"是小区地址、"黄浦雅苑"是小区名称，
-// 剩余部分按 区/栋/单元/层(楼)/号 切分：1栋(楼栋) 4单元(单元) 1楼(楼层) 1号(房屋名称)。
-// 系统按解析结果补齐缺失层级，再把房屋挂到最末级节点上。
+// 解析后自动补齐缺失层级，再挂载房屋。
+//
+// 导入采用"全量校验 + 一次性写入"：只要有任何一行不合格，整批不导入，
+// 并把所有问题逐行返回，避免出现"导入了一半"的脏数据。
 package service
 
 import (
@@ -16,6 +17,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 
 	"web-basic/internal/excel"
 	"web-basic/internal/model/entity"
@@ -62,6 +65,8 @@ type StructureImportResult struct {
 	Failed  int      `json:"failed"`
 	Errors  []string `json:"errors"`
 	Houses  int      `json:"houses"`
+	// Aborted=true 表示校验未通过，本次没有写入任何数据
+	Aborted bool `json:"aborted"`
 }
 
 // addressSegment 地址解析出的一段：名称 + 对应层级类型（0 表示房屋名称）。
@@ -71,13 +76,6 @@ type addressSegment struct {
 }
 
 // parseHouseAddress 解析"层级结构 + 房屋名称"。
-//
-// 规则：从左到右扫描，遇到 区 / 栋 / 单元 / 层 / 楼 / 号 即切分一段；
-//   - 区 → 区域(1)
-//   - 栋 → 楼栋(2)
-//   - 单元 → 单元(3)
-//   - 层 / 楼 → 楼层(4)
-//   - 号 → 房屋名称(0)
 func parseHouseAddress(rest string) ([]addressSegment, string, error) {
 	rest = strings.TrimSpace(rest)
 	if rest == "" {
@@ -88,29 +86,23 @@ func parseHouseAddress(rest string) ([]addressSegment, string, error) {
 	runes := []rune(rest)
 	start := 0
 	for i := 0; i < len(runes); i++ {
-		// 先看双字后缀"单元"
 		if i > start && runes[i] == '元' && runes[i-1] == '单' {
-			name := strings.TrimSpace(string(runes[start : i+1]))
-			segments = append(segments, addressSegment{Name: name, Type: 3})
+			segments = append(segments, addressSegment{Name: strings.TrimSpace(string(runes[start : i+1])), Type: 3})
 			start = i + 1
 			continue
 		}
 		switch runes[i] {
 		case '区':
-			name := strings.TrimSpace(string(runes[start : i+1]))
-			segments = append(segments, addressSegment{Name: name, Type: 1})
+			segments = append(segments, addressSegment{Name: strings.TrimSpace(string(runes[start : i+1])), Type: 1})
 			start = i + 1
 		case '栋', '幢', '座':
-			name := strings.TrimSpace(string(runes[start : i+1]))
-			segments = append(segments, addressSegment{Name: name, Type: 2})
+			segments = append(segments, addressSegment{Name: strings.TrimSpace(string(runes[start : i+1])), Type: 2})
 			start = i + 1
 		case '层', '楼':
-			name := strings.TrimSpace(string(runes[start : i+1]))
-			segments = append(segments, addressSegment{Name: name, Type: 4})
+			segments = append(segments, addressSegment{Name: strings.TrimSpace(string(runes[start : i+1])), Type: 4})
 			start = i + 1
 		case '号':
-			name := strings.TrimSpace(string(runes[start : i+1]))
-			houseNo = name
+			houseNo = strings.TrimSpace(string(runes[start : i+1]))
 			start = i + 1
 		}
 	}
@@ -123,7 +115,29 @@ func parseHouseAddress(rest string) ([]addressSegment, string, error) {
 	return segments, houseNo, nil
 }
 
-// ImportStructures 按「房屋地址」导入房屋：自动补齐缺失层级，再挂载房屋。
+// planNode 校验阶段规划出的待创建层级。
+type planNode struct {
+	Key       string
+	ParentKey string
+	ParentID  uint64 // 已存在节点直接用 ID；新建节点为 0
+	Name      string
+	Type      int
+	Node      *entity.StructureNode // 已存在或新建后的节点（新建时为预生成对象）
+	IsNew     bool
+}
+
+// planHouse 校验通过、待写入的房屋。
+type planHouse struct {
+	Line     int
+	Code     string
+	HouseNo  string
+	NodeKey  string
+	NodeID   uint64
+	NodeAddr string
+	Area     float64
+}
+
+// ImportStructures 按「房屋地址」导入房屋：先全量校验，全部通过后一次性写入。
 func (s *Service) ImportStructures(ctx context.Context, communityID uint64, r io.Reader, p *principal.Info) (*StructureImportResult, error) {
 	if err := s.MustCommunity(ctx, p, communityID); err != nil {
 		return nil, err
@@ -142,7 +156,6 @@ func (s *Service) ImportStructures(ctx context.Context, communityID uint64, r io
 	if len(rows) <= 1 {
 		return nil, errs.Invalid("文件没有数据行")
 	}
-	// 小区前缀 = 小区地址 + 小区名称
 	normalizeAddr := func(v string) string {
 		v = strings.ReplaceAll(v, " ", "")
 		v = strings.ReplaceAll(v, "\u3000", "")
@@ -152,6 +165,7 @@ func (s *Service) ImportStructures(ctx context.Context, communityID uint64, r io
 	if prefix == "" {
 		return nil, errs.Invalid("请先完善小区的行政区划/地址信息，再导入房屋")
 	}
+
 	res := &StructureImportResult{Errors: []string{}}
 	cell := func(row []string, i int) string {
 		if i < len(row) {
@@ -159,13 +173,68 @@ func (s *Service) ImportStructures(ctx context.Context, communityID uint64, r io
 		}
 		return ""
 	}
-	failed := func(line int, msg string) {
+	addErr := func(line int, msg string) {
 		res.Failed++
-		if len(res.Errors) < 200 {
+		if len(res.Errors) < 500 {
 			res.Errors = append(res.Errors, fmt.Sprintf("第 %d 行：%s", line, msg))
 		}
 	}
-	seen := map[string]bool{}
+
+	// 现有层级：key = parentID|name
+	type nodeKey struct {
+		ParentID uint64
+		Name     string
+	}
+	var existNodes []entity.StructureNode
+	if err := s.Repo.DB.WithContext(ctx).Where("community_id = ?", communityID).Find(&existNodes).Error; err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	nodeMap := map[nodeKey]*entity.StructureNode{}
+	for i := range existNodes {
+		n := &existNodes[i]
+		nodeMap[nodeKey{ParentID: n.ParentID, Name: n.Name}] = n
+	}
+	planNodes := []*planNode{}
+	// 预生成新节点对象（父节点 ID 稍后回填），用指针保证后续行复用同一对象
+	ensurePlanNode := func(parentID uint64, parentKey string, name string, typ int) *entity.StructureNode {
+		k := nodeKey{ParentID: parentID, Name: name}
+		if n, ok := nodeMap[k]; ok {
+			return n
+		}
+		// 尚未落库的新节点用 parentKey+name 作为临时键
+		tempKey := fmt.Sprintf("%s|%s", parentKey, name)
+		for _, pn := range planNodes {
+			if pn.Key == tempKey {
+				return pn.Node
+			}
+		}
+		node := &entity.StructureNode{
+			Base:        entity.Base{ID: id.Next(), CreateBy: p.UserID, CreateTime: time.Now(), UpdateBy: p.UserID},
+			TenantID:    com.TenantID,
+			CommunityID: communityID,
+			ParentID:    parentID,
+			Code:        fmt.Sprintf("IMP%d", id.Next()),
+			Name:        name,
+			NodeType:    typ,
+			Category:    9,
+			Status:      1,
+		}
+		planNodes = append(planNodes, &planNode{Key: tempKey, Name: name, Type: typ, Node: node, IsNew: true})
+		nodeMap[k] = node
+		return node
+	}
+
+	// ---------- 阶段一：全量校验 ----------
+	codes := make([]string, 0, len(rows)-1)
+	parsed := make([]struct {
+		line     int
+		code     string
+		houseNo  string
+		node     *entity.StructureNode
+		segments []addressSegment
+		area     float64
+	}, 0, len(rows)-1)
+	seen := map[string]int{}
 	for i, row := range rows[1:] {
 		lineNo := i + 2
 		res.Total++
@@ -173,117 +242,184 @@ func (s *Service) ImportStructures(ctx context.Context, communityID uint64, r io
 		address := normalizeAddr(cell(row, 1))
 		areaText := cell(row, 2)
 		if code == "" {
-			failed(lineNo, "房屋编码不能为空")
+			addErr(lineNo, "房屋编码不能为空")
 			continue
 		}
 		if address == "" {
-			failed(lineNo, "房屋地址不能为空")
+			addErr(lineNo, "房屋地址不能为空")
 			continue
 		}
-		if seen[code] {
-			failed(lineNo, "房屋编码在本次文件中重复："+code)
+		if first, ok := seen[code]; ok {
+			addErr(lineNo, fmt.Sprintf("房屋编码与第 %d 行重复：%s", first, code))
 			continue
 		}
 		if !strings.HasPrefix(address, prefix) {
-			failed(lineNo, fmt.Sprintf("房屋地址与小区不匹配，地址是“%s”, 应以“%s”开头", address, prefix))
+			addErr(lineNo, fmt.Sprintf("房屋地址与小区不匹配，应以“%s”开头", prefix))
 			continue
 		}
-		rest := strings.TrimPrefix(address, prefix)
-		segments, houseNo, err := parseHouseAddress(rest)
+		segments, houseNo, err := parseHouseAddress(strings.TrimPrefix(address, prefix))
 		if err != nil {
-			failed(lineNo, err.Error())
+			addErr(lineNo, err.Error())
 			continue
 		}
-		// 补齐/复用层级：从小区根开始逐级查找
 		var parentID uint64
-		var parentAddr string
-		var lastNode *entity.StructureNode
-		var buildingID, unitID, floorID uint64
-		var buildErr error
+		parentKey := "0"
+		var last *entity.StructureNode
 		for _, seg := range segments {
-			node, err := s.ensureChildNode(ctx, communityID, com, parentID, seg.Name, seg.Type, p)
-			if err != nil {
-				buildErr = err
-				break
-			}
-			parentID = node.ID
-			parentAddr = node.FullAddress
-			lastNode = node
-			switch seg.Type {
-			case 2:
-				buildingID = node.ID
-			case 3:
-				unitID = node.ID
-			case 4:
-				floorID = node.ID
-			}
+			last = ensurePlanNode(parentID, parentKey, seg.Name, seg.Type)
+			parentID = last.ID
+			parentKey = fmt.Sprintf("%s|%s", parentKey, seg.Name)
 		}
-		if buildErr != nil {
-			failed(lineNo, fmtErr(buildErr))
-			continue
-		}
-		area := toFloat(areaText) // 空面积按 0 处理
-		var nodePtr *entity.StructureNode
-		if lastNode != nil {
-			nodePtr = lastNode
-		}
-		house := &entity.House{
-			Base:        entity.Base{ID: id.Next(), CreateBy: p.UserID, CreateTime: time.Now(), UpdateBy: p.UserID},
-			TenantID:    com.TenantID,
-			CommunityID: com.ID,
-			NodeID:      parentID,
-			BuildingID:  buildingID,
-			UnitID:      unitID,
-			FloorID:     floorID,
-			Code:        code,
-			HouseNo:     houseNo,
-			FullName:    parentAddr + houseNo,
-			UsageType:   1,
-			AreaBuild:   area,
-			AreaUse:     area,
-			HouseStatus: 1,
-		}
-		if nodePtr == nil {
-			house.FullName = prefix + houseNo
-		}
-		if err := s.Repo.DB.WithContext(ctx).Create(house).Error; err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-				failed(lineNo, "房屋编码已存在："+code)
-			} else {
-				failed(lineNo, fmtErr(err))
-			}
-			continue
-		}
-		seen[code] = true
-		res.Success++
-		res.Houses++
+		seen[code] = lineNo
+		codes = append(codes, code)
+		parsed = append(parsed, struct {
+			line     int
+			code     string
+			houseNo  string
+			node     *entity.StructureNode
+			segments []addressSegment
+			area     float64
+		}{line: lineNo, code: code, houseNo: houseNo, node: last, segments: segments, area: toFloat(areaText)})
 	}
-	// 导入后重算节点/小区房屋统计
+	// 与库中已有编码比对
+	if len(codes) > 0 {
+		var dupCodes []string
+		if err := s.Repo.DB.WithContext(ctx).Model(&entity.House{}).
+			Where("community_id = ? AND code IN ?", communityID, codes).
+			Pluck("code", &dupCodes).Error; err != nil {
+			return nil, errs.ErrDB.WithErr(err)
+		}
+		if len(dupCodes) > 0 {
+			dupSet := map[string]bool{}
+			for _, c := range dupCodes {
+				dupSet[c] = true
+			}
+			kept := parsed[:0]
+			for _, it := range parsed {
+				if dupSet[it.code] {
+					addErr(it.line, "房屋编码已存在："+it.code)
+					continue
+				}
+				kept = append(kept, it)
+			}
+			parsed = kept
+		}
+	}
+	if res.Failed > 0 {
+		// 有任一行不合格：整批不导入
+		res.Aborted = true
+		res.Success = 0
+		res.Houses = 0
+		return res, nil
+	}
+
+	// ---------- 阶段二：一次性写入（事务） ----------
+	err = s.Repo.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 创建缺失层级（父先子后：planNodes 按解析顺序天然父先）
+		for _, pn := range planNodes {
+			if !pn.IsNew {
+				continue
+			}
+			n := pn.Node
+			// 解析父节点地址与层级
+			var parent *entity.StructureNode
+			if n.ParentID != 0 {
+				var pnEntity entity.StructureNode
+				if err := tx.Where("id = ?", n.ParentID).First(&pnEntity).Error; err != nil {
+					return err
+				}
+				parent = &pnEntity
+			}
+			level := 1
+			path := fmt.Sprintf("0,%d", n.ID)
+			baseAddr := communityBaseAddress(com)
+			if parent != nil {
+				level = parent.LevelNo + 1
+				path = fmt.Sprintf("%s,%d", parent.Path, n.ID)
+				if parent.FullAddress != "" {
+					baseAddr = parent.FullAddress
+				}
+			}
+			n.LevelNo = level
+			n.Path = path
+			n.FullAddress = baseAddr + n.Name
+			if err := tx.Create(n).Error; err != nil {
+				return err
+			}
+		}
+		// 写入房屋
+		for _, it := range parsed {
+			var buildingID, unitID, floorID uint64
+			var nodeID uint64
+			var nodeAddr string
+			if it.node != nil {
+				nodeID = it.node.ID
+				nodeAddr = it.node.FullAddress
+				// 重新读取（可能是本事务内新建的）
+				var fresh entity.StructureNode
+				if err := tx.Where("id = ?", nodeID).First(&fresh).Error; err == nil {
+					nodeAddr = fresh.FullAddress
+				}
+			}
+			// 沿父链取楼栋/单元/楼层 ID（同一小区可能存在多个同名单元，必须按链取）
+			cur := nodeID
+			for depth := 0; depth < 10 && cur != 0; depth++ {
+				var n entity.StructureNode
+				if err := tx.Where("id = ?", cur).First(&n).Error; err != nil {
+					break
+				}
+				switch n.NodeType {
+				case 2:
+					buildingID = n.ID
+				case 3:
+					unitID = n.ID
+				case 4:
+					floorID = n.ID
+				}
+				cur = n.ParentID
+			}
+			fullName := prefix + it.houseNo
+			if nodeAddr != "" {
+				fullName = nodeAddr + it.houseNo
+			}
+			house := &entity.House{
+				Base:        entity.Base{ID: id.Next(), CreateBy: p.UserID, CreateTime: time.Now(), UpdateBy: p.UserID},
+				TenantID:    com.TenantID,
+				CommunityID: com.ID,
+				NodeID:      nodeID,
+				BuildingID:  buildingID,
+				UnitID:      unitID,
+				FloorID:     floorID,
+				Code:        it.code,
+				HouseNo:     it.houseNo,
+				FullName:    fullName,
+				UsageType:   1,
+				AreaBuild:   it.area,
+				AreaUse:     it.area,
+				HouseStatus: 1,
+			}
+			if err := tx.Create(house).Error; err != nil {
+				if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+					return errs.Invalid("房屋编码已存在：" + it.code)
+				}
+				return err
+			}
+			res.Success++
+			res.Houses++
+		}
+		return nil
+	})
+	if err != nil {
+		res.Success = 0
+		res.Houses = 0
+		res.Aborted = true
+		res.Failed = res.Total
+		res.Errors = append(res.Errors, "导入失败已整体回滚："+fmtErr(err))
+		return res, nil
+	}
 	s.recalcNodeCounts(ctx, communityID)
 	s.recalcCommunityCounts(ctx, communityID)
 	return res, nil
-}
-
-// ensureChildNode 在 parentID 下按名称复用或创建指定类型的层级节点。
-func (s *Service) ensureChildNode(ctx context.Context, communityID uint64, com *entity.Community, parentID uint64, name string, nodeType int, p *principal.Info) (*entity.StructureNode, error) {
-	var node entity.StructureNode
-	q := s.Repo.DB.WithContext(ctx).Where("community_id = ? AND parent_id = ? AND name = ?", communityID, parentID, name)
-	if err := q.First(&node).Error; err == nil {
-		return &node, nil
-	}
-	newID, err := s.CreateNode(ctx, &NodeReq{
-		CommunityID: jsonx.Uint64(communityID),
-		ParentID:    jsonx.Uint64(parentID),
-		Name:        name,
-		NodeType:    nodeType,
-	}, p)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.Repo.DB.WithContext(ctx).Where("id = ?", newID).First(&node).Error; err != nil {
-		return nil, errs.ErrDB.WithErr(err)
-	}
-	return &node, nil
 }
 
 // SpaceExport 导出小区基础信息明细（层级 + 房屋）。
@@ -303,18 +439,6 @@ func (s *Service) SpaceExport(ctx context.Context, communityID, nodeID uint64, p
 			break
 		}
 	}
-	catByNode := map[uint64]int{}
-	if len(all) > 0 {
-		nodeIDs := make([]uint64, 0, len(all))
-		for _, h := range all {
-			nodeIDs = append(nodeIDs, h.NodeID)
-		}
-		var nodes []entity.StructureNode
-		_ = s.Repo.DB.WithContext(ctx).Model(&entity.StructureNode{}).Where("id IN ?", nodeIDs).Find(&nodes).Error
-		for _, n := range nodes {
-			catByNode[n.ID] = n.Category
-		}
-	}
 	rows := make([][]any, 0, len(all))
 	for _, h := range all {
 		rows = append(rows, []any{
@@ -331,10 +455,4 @@ func (s *Service) SpaceExport(ctx context.Context, communityID, nodeID uint64, p
 		return nil, "", errs.ErrInternal.WithErr(err)
 	}
 	return data, "小区基础信息_" + time.Now().Format("20060102_150405") + ".xlsx", nil
-}
-
-// isYes 解析"是/否/1/0/true"。
-func isYes(v string) bool {
-	v = strings.ToLower(strings.TrimSpace(v))
-	return v == "是" || v == "1" || v == "true" || v == "y"
 }

@@ -322,14 +322,55 @@ async function main() {
   const importedHouses = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&keyword=`, undefined, token)
   check('导入的房屋已挂载并带地址全称', (importedHouses.data?.list || []).some((h) => String(h.fullName).includes('1栋4单元1楼1号')), String(importedHouses.data?.total))
 
+  const housesBeforeDup = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=1`, undefined, token)
   const dupImport = await uploadSpaceTemplate(communityId)
-  check('重复导入逐行报编码已存在', dupImport.code === 0 && dupImport.data?.success === 0 && dupImport.data?.failed >= 3 && /已存在/.test(JSON.stringify(dupImport.data?.errors)), JSON.stringify(dupImport.data?.errors || {}).slice(0, 80))
+  check(
+    '重复导入整批拒绝（不写入任何数据）',
+    dupImport.code === 0 &&
+      dupImport.data?.aborted === true &&
+      dupImport.data?.success === 0 &&
+      dupImport.data?.failed >= 3 &&
+      /已存在/.test(JSON.stringify(dupImport.data?.errors)),
+    JSON.stringify(dupImport.data?.errors || {}).slice(0, 80)
+  )
+  const housesAfterDup = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=1`, undefined, token)
+  check('校验失败时房屋总数不变', housesAfterDup.data?.total === housesBeforeDup.data?.total, String(housesBeforeDup.data?.total) + '→' + String(housesAfterDup.data?.total))
+
+  // 部分行有错（一条重复）→ 整批不导入，证明不是"导一半"
+  const atomicCom = await api('POST', '/api/v1/property/communities', { tenantId, code: 'ATM' + suffix, name: '原子导入小区' + suffix, address: '原子省原子市原子区原子路1号' }, token)
+  let atomicRes = { code: 0, data: {} }
+  let atomicHouses = 0
+  if (atomicCom.code === 0) {
+    await api('POST', '/api/v1/property/structures/houses', { communityId: atomicCom.data?.id, code: '1-4-101', houseNo: '1号', usageType: 1, areaBuild: 50 }, token)
+    const tplAtomic = await fetch(BASE + `/api/v1/property/structures/import-template?communityId=${atomicCom.data?.id}`, { headers: { Authorization: `Bearer ${token}` } })
+    const atomicBuf = await tplAtomic.arrayBuffer()
+    const fd2 = new FormData()
+    fd2.append('file', new Blob([atomicBuf]), 't.xlsx')
+    atomicRes = await (
+      await fetch(BASE + `/api/v1/property/structures/import?communityId=${atomicCom.data?.id}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd2
+      })
+    ).json()
+    const listAtomic = await api('GET', `/api/v1/property/structures/houses?communityId=${atomicCom.data?.id}&page=1&pageSize=10`, undefined, token)
+    atomicHouses = listAtomic.data?.total ?? 0
+  }
+  check(
+    '部分行有错时整批回滚（仅保留原有1套）',
+    atomicCom.code === 0 && atomicRes.data?.aborted === true && atomicRes.data?.success === 0 && atomicHouses === 1,
+    `aborted=${atomicRes.data?.aborted} success=${atomicRes.data?.success} houses=${atomicHouses}`
+  )
 
   // 地址与目标小区不匹配 → 全部失败且提示应以前缀开头
   const otherCom = await api('POST', '/api/v1/property/communities', { tenantId, code: 'IMP' + suffix, name: '导入校验小区' + suffix, address: '某省某市某区某路1号' }, token)
   let mismatch = { code: 0, data: {} }
   if (otherCom.code === 0) mismatch = await uploadSpaceTemplate(otherCom.data?.id)
-  check('地址与小区不匹配的数据被明确拒绝', otherCom.code === 0 && mismatch.code === 0 && mismatch.data?.failed >= 3 && /不匹配/.test(JSON.stringify(mismatch.data?.errors)), JSON.stringify(mismatch.data?.errors || {}).slice(0, 80))
+  check(
+    '地址与小区不匹配的数据被明确拒绝且不导入',
+    otherCom.code === 0 && mismatch.code === 0 && mismatch.data?.aborted === true && mismatch.data?.failed >= 3 && /不匹配/.test(JSON.stringify(mismatch.data?.errors)),
+    JSON.stringify(mismatch.data?.errors || {}).slice(0, 80)
+  )
 
   const exportRes = await fetch(BASE + `/api/v1/property/spaces/export?communityId=${communityId}`, { headers: { Authorization: `Bearer ${token}` } })
   const exportBuf = await exportRes.arrayBuffer()

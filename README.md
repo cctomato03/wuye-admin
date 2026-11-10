@@ -136,7 +136,7 @@ cd web && npx vue-tsc --noEmit && pnpm build
 
 # 接口 + 浏览器端到端（需服务已启动）
 node scripts/e2e-api.mjs        http://127.0.0.1:8090 admin   # 脚手架基线 76 条
-node scripts/e2e-property.mjs   http://127.0.0.1:8090 admin   # 物业业务 + 权限 148 条
+node scripts/e2e-property.mjs   http://127.0.0.1:8090 admin   # 物业业务 + 权限 150 条
 node scripts/e2e-property-ui.mjs http://127.0.0.1:8090 admin Admin@123456  # 浏览器 40 条
 ```
 

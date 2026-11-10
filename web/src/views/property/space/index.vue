@@ -300,6 +300,8 @@
     <ElDialog v-model="importResultVisible" title="导入结果" width="640px" align-center>
       <ElAlert v-if="importResult" :type="importResult.failed ? 'warning' : 'success'" :closable="false" show-icon
         :title="`共 ${importResult.total} 行，成功 ${importResult.success} 行，失败 ${importResult.failed} 行`" />
+      <ElAlert v-if="importResult?.aborted" class="mt-2" type="error" :closable="false" show-icon
+        title="存在错误，本次未导入任何数据。请修正下列问题后重新上传。" />
       <ul v-if="importResult?.errors?.length" class="mt-2 max-h-60 overflow-auto text-xs text-red-500">
         <li v-for="(msg, i) in importResult.errors" :key="i">{{ msg }}</li>
       </ul>
@@ -368,7 +370,7 @@
   const nodeDialog = ref(false)
   const houseDialog = ref(false)
   const importResultVisible = ref(false)
-  const importResult = ref<{ total: number; success: number; failed: number; errors: string[] }>()
+  const importResult = ref<{ total: number; success: number; failed: number; errors: string[]; aborted?: boolean }>()
   const editingNode = ref<TreeRow | null>(null)
   const editingHouse = ref<TreeRow | null>(null)
   const fileInputRef = ref<HTMLInputElement>()
@@ -449,7 +451,8 @@
             raw: it.node
           })
         } else if (it.rowType === 'house' && it.house) {
-          rows.push({ id: it.house.id, label: it.house.fullName, rowType: 'house', typeName: '房屋', isLeaf: true, raw: it.house })
+          // 树里房屋只显示房号，避免整条地址把树撑得很长
+          rows.push({ id: it.house.id, label: it.house.houseNo || it.house.code, rowType: 'house', typeName: '房屋', isLeaf: true, raw: it.house })
         }
       })
       if (row.rowType === 'root') rootChildNames.value = childNodes
@@ -647,7 +650,7 @@
     if (!file || !currentId.value) return
     importing.value = true
     try {
-      const res = await uploadFile<{ total: number; success: number; failed: number; errors: string[] }>(
+      const res = await uploadFile<{ total: number; success: number; failed: number; errors: string[]; aborted?: boolean }>(
         `/api/v1/property/structures/import?communityId=${currentId.value}`,
         file
       )
