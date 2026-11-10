@@ -20,13 +20,9 @@
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-2">
         <CommunitySelector @change="handleCommunityChange" />
-        <ElButton type="primary" :disabled="!currentId" @click="openNodeDialog(null, '0')">新建</ElButton>
-        <ElButton :disabled="!currentId" @click="openHouseDialog(null)">新增房屋</ElButton>
+        <ElButton type="primary" :disabled="!currentId" @click="openNodeDialog(null, defaultParentId())">新建</ElButton>
         <ElButton v-auth="'property:structure:import'" :loading="importing" :disabled="!currentId" @click="triggerImport">导入 Excel</ElButton>
         <ElButton text @click="downloadTemplate">下载模板</ElButton>
-        <ElButton :loading="exporting" :disabled="!currentId" @click="exportHouses">导出</ElButton>
-        <ElButton @click="typeVisible = true">房屋类型</ElButton>
-        <ElButton :loading="loading" @click="reload">刷新</ElButton>
         <input ref="fileInputRef" type="file" accept=".xlsx,.xls" class="hidden" @change="handleImport" />
       </div>
     </ElCard>
@@ -34,7 +30,7 @@
     <div class="flex min-h-0 flex-1 gap-3">
       <!-- 左：层级树 -->
       <ElCard class="!w-80 shrink-0">
-        <ElButton type="primary" class="mb-2 w-full" :disabled="!currentId" @click="openNodeDialog(null, '0')">新建</ElButton>
+        <ElButton type="primary" class="mb-2 w-full" :disabled="!currentId" @click="openNodeDialog(null, defaultParentId())">新建</ElButton>
         <ElInput v-model="treeKeyword" size="small" placeholder="搜索层级名称 / 地址" clearable class="mb-2" />
         <ElScrollbar height="calc(100vh - 380px)">
           <ElTree
@@ -190,10 +186,16 @@
     <ElDialog v-model="nodeDialog" :title="editingNode ? '编辑层级' : '新建层级'" width="520px" align-center destroy-on-close>
       <ElForm :model="nodeForm" label-width="90px">
         <ElFormItem label="上级层级" required>
-          <ElSelect v-model="nodeForm.parentId" filterable class="w-full" placeholder="选择上级（小区为顶级）">
-            <ElOption label="小区（顶级）" value="0" />
-            <ElOption v-for="n in nodeOptions" :key="n.id" :label="n.name" :value="n.id" />
-          </ElSelect>
+          <ElTreeSelect
+            v-model="nodeForm.parentId"
+            :data="parentTree"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            check-strictly
+            filterable
+            default-expand-all
+            class="w-full"
+            placeholder="选择上级层级（默认小区为顶级）"
+          />
         </ElFormItem>
         <ElFormItem label="层级名称" required>
           <ElInput v-model.trim="nodeForm.name" placeholder="如 1栋 / 1单元 / 1层 / 一期" maxlength="64" />
@@ -294,23 +296,6 @@
       </template>
     </ElDialog>
 
-    <!-- 房屋类型 -->
-    <ElDialog v-model="typeVisible" title="房屋类型" width="620px" align-center destroy-on-close>
-      <ElSpace class="mb-2">
-        <ElInput v-model="newTypeName" placeholder="类型名称，如 三室两厅" maxlength="64" class="!w-56" />
-        <ElButton type="primary" @click="addHouseType">新增</ElButton>
-      </ElSpace>
-      <ElTable :data="houseTypes" size="small" max-height="320">
-        <ElTableColumn prop="name" label="名称" />
-        <ElTableColumn prop="layout" label="户型" />
-        <ElTableColumn label="操作" width="90">
-          <template #default="{ row }">
-            <ElButton type="danger" link @click="removeHouseType(row)">删除</ElButton>
-          </template>
-        </ElTableColumn>
-      </ElTable>
-    </ElDialog>
-
     <!-- 导入结果 -->
     <ElDialog v-model="importResultVisible" title="导入结果" width="640px" align-center>
       <ElAlert v-if="importResult" :type="importResult.failed ? 'warning' : 'success'" :closable="false" show-icon
@@ -319,7 +304,8 @@
         <li v-for="(msg, i) in importResult.errors" :key="i">{{ msg }}</li>
       </ul>
       <div class="mt-3 text-xs text-g-500">
-        导入规则：层级路径用 / 分隔（如 1栋/1单元/1层），不存在会自动创建；「空间类别 / 总层数」写到楼栋节点。
+        导入规则：模板三列（房屋编码 / 房屋地址 / 房屋面积）。房屋地址需以「小区地址 + 小区名称」开头，
+        例如「湖北省武汉市江岸区黄浦大街25号黄浦雅苑1栋4单元1楼1号」；系统会按 区/栋/单元/层(楼)/号 自动补齐层级后挂载房屋。面积留空按 0 处理。
       </div>
     </ElDialog>
   </div>
@@ -331,6 +317,7 @@
   import { usePropertyCommunity } from '@/utils/property-community'
   import { fetchGetDictData } from '@/api/business'
   import {
+    fetchNodeTree,
     fetchNodeOptions,
     fetchNodeChildren,
     fetchNodeCard,
@@ -365,6 +352,7 @@
   const treeData = ref<TreeRow[]>([])
   const treeKeyword = ref('')
   const nodeOptions = ref<Property.Option[]>([])
+  const allNodes = ref<Property.StructureNodeItem[]>([])
   const communityCard = ref<Property.CommunityCard | null>(null)
   const nodeCard = ref<Property.NodeCard | null>(null)
   const houseCard = ref<Property.HouseCard | null>(null)
@@ -379,7 +367,6 @@
   const exporting = ref(false)
   const nodeDialog = ref(false)
   const houseDialog = ref(false)
-  const typeVisible = ref(false)
   const importResultVisible = ref(false)
   const importResult = ref<{ total: number; success: number; failed: number; errors: string[] }>()
   const editingNode = ref<TreeRow | null>(null)
@@ -389,6 +376,26 @@
   const newTypeName = ref('')
 
   const nodeForm = reactive<Record<string, any>>({ parentId: '0', name: '', nodeType: undefined })
+
+  // 上级层级选择：树形展示（顶层为"小区（顶级）"）
+  const parentTree = computed<any[]>(() => {
+    const roots: any[] = []
+    const byParent = new Map<string, any[]>()
+    allNodes.value.forEach((n) => {
+      const item = { id: n.id, name: n.name, children: [] as any[] }
+      const key = String(n.parentId || '0')
+      const arr = byParent.get(key) || []
+      arr.push(item)
+      byParent.set(key, arr)
+    })
+    const build = (parentId: string): any[] => {
+      const list = byParent.get(parentId) || []
+      list.forEach((item) => (item.children = build(item.id)))
+      return list
+    }
+    roots.push(...build('0'))
+    return [{ id: '0', name: '小区（顶级）', children: roots }]
+  })
   const houseForm = reactive<Record<string, any>>({
     nodeId: '0',
     code: '',
@@ -459,6 +466,7 @@
     }
     communityCard.value = await fetchCommunityCard(currentId.value)
     nodeOptions.value = (await fetchNodeOptions(currentId.value, false)) || []
+    allNodes.value = (await fetchNodeTree(currentId.value)) || []
     houseTypes.value = (await fetchGetHouseTypes(currentId.value)) || []
   }
 
@@ -523,6 +531,14 @@
     houseCard.value = await fetchHouseCard(row.id)
     nodeCard.value = null
     nodeHouses.value = []
+  }
+
+  // 新建时默认上级：若在树中选中了层级/房屋，则用它的节点；否则小区（顶级）
+  const defaultParentId = () => {
+    if (!selected.value) return '0'
+    if (selected.value.rowType === 'node') return selected.value.id
+    if (selected.value.rowType === 'house') return selected.value.raw?.nodeId || '0'
+    return '0'
   }
 
   const openNodeDialog = (row: TreeRow | null, parentId: string) => {
@@ -619,19 +635,11 @@
     await reload()
   }
 
-  const addHouseType = async () => {
-    if (!newTypeName.value) return
-    await fetchCreateHouseType({ communityId: currentId.value, name: newTypeName.value, usageType: 1 })
-    newTypeName.value = ''
-    houseTypes.value = (await fetchGetHouseTypes(currentId.value)) || []
-  }
-  const removeHouseType = async (row: Property.HouseType) => {
-    await fetchDeleteHouseType(row.id)
-    houseTypes.value = (await fetchGetHouseTypes(currentId.value)) || []
-  }
+
 
   const triggerImport = () => fileInputRef.value?.click()
-  const downloadTemplate = () => downloadFile('/api/v1/property/structures/import-template', {}, '小区基础信息导入模板.xlsx')
+  const downloadTemplate = () =>
+    downloadFile('/api/v1/property/structures/import-template', { communityId: currentId.value }, '小区基础信息导入模板.xlsx')
   const handleImport = async (e: Event) => {
     const input = e.target as HTMLInputElement
     const file = input.files?.[0]
@@ -651,14 +659,7 @@
     }
   }
 
-  const exportHouses = async () => {
-    exporting.value = true
-    try {
-      await downloadFile('/api/v1/property/spaces/export', { communityId: currentId.value }, '小区基础信息.xlsx')
-    } finally {
-      exporting.value = false
-    }
-  }
+
 
   onMounted(async () => {
     nodeTypes.value = (await fetchGetDictData('space_node_type')) || []

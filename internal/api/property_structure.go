@@ -285,7 +285,7 @@ func (h *Handler) ExportSpaceHouses(c *gin.Context) {
 
 // StructureImportTemplate 楼宇结构导入模板。
 func (h *Handler) StructureImportTemplate(c *gin.Context) {
-	data, err := h.Svc.SpaceImportTemplate()
+	data, err := h.Svc.SpaceImportTemplate(c.Request.Context(), queryID(c, "communityId"), principal.Must(c))
 	if err != nil {
 		response.Fail(c, err)
 		return

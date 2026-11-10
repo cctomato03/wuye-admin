@@ -9,6 +9,7 @@
     ></RoleSearch>
 
     <ElCard class="art-table-card" :style="{ 'margin-top': showSearchBar ? '12px' : '0' }">
+      <OrgTenantSelector class="mb-2" @change="handleTenantChange" />
       <ArtTableHeader
         v-model:columns="columnChecks"
         v-model:showSearchBar="showSearchBar"
@@ -16,7 +17,6 @@
         @refresh="refreshData"
       >
         <template #left>
-        <OrgTenantSelector class="mr-2" @change="handleTenantChange" />
           <ElSpace wrap>
             <ElButton @click="showDialog('add')" v-ripple>新增角色</ElButton>
           </ElSpace>

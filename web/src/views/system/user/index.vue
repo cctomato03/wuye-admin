@@ -7,9 +7,9 @@
 
     <ElCard class="art-table-card">
       <!-- 表格头部 -->
+      <OrgTenantSelector class="mb-2" @change="handleTenantChange" />
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="refreshData">
         <template #left>
-        <OrgTenantSelector class="mr-2" @change="handleTenantChange" />
           <ElSpace wrap>
             <ElButton v-auth="'system:user:create'" @click="showDialog('add')" v-ripple>
               新增用户

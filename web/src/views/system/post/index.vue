@@ -2,9 +2,9 @@
 <template>
   <div class="post-page art-full-height">
     <ElCard class="art-table-card">
+      <OrgTenantSelector class="mb-2" @change="loadData" />
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="loadData">
         <template #left>
-        <OrgTenantSelector class="mr-2" @change="loadData" />
           <ElSpace wrap>
             <ElButton v-auth="'system:post:create'" @click="openDialog('add', null)" v-ripple>
               新增岗位

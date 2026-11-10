@@ -14,9 +14,9 @@
     </ElCard>
 
     <ElCard class="art-table-card flex-1">
+      <OrgTenantSelector class="mb-2" @change="handleTenantChange" />
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="refreshData">
         <template #left>
-        <OrgTenantSelector class="mr-2" @change="handleTenantChange" />
           <ElSpace wrap>
             <ElButton v-auth="'property:employee:create'" type="primary" @click="openDialog()" v-ripple>新增员工</ElButton>
             <ElButton @click="clearDeptFilter" v-if="query.deptId">清除部门筛选</ElButton>

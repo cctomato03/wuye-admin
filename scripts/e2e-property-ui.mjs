@@ -413,6 +413,18 @@ const { proc, dir, page } = await launch()
     const houseCardText = (await cdp.eval('document.body.innerText')) || ''
     check('房屋卡片显示住户与车辆信息', houseClicked && /房屋名称：/.test(houseCardText) && /住户信息/.test(houseCardText) && /车辆信息/.test(houseCardText), houseCardText.slice(0, 80).replace(/\n/g, '/'))
 
+    // 顶部按钮只保留导入/下载模板
+    const toolbarText = (await cdp.eval("[...document.querySelectorAll('.el-card')][0] ? [...document.querySelectorAll('.el-card')][0].querySelectorAll('button') && [...[...document.querySelectorAll('.el-card')][0].querySelectorAll('button')].map((b) => b.innerText.trim()).join('|') : ''")) || ''
+    check('顶部仅保留导入与下载模板按钮', /导入 Excel/.test(toolbarText) && /下载模板/.test(toolbarText) && !/导出|房屋类型|批量生成/.test(toolbarText), toolbarText.slice(0, 120))
+
+    // 已选中层级时，新建表单的"上级层级"应默认带入该层级（树形下拉）
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新建'); b&&b.click() })()")
+    await sleep(900)
+    const parentVal = (await cdp.eval("(() => { const d=document.querySelector('.el-dialog'); if(!d) return ''; const sel=d.querySelector('.el-select, .el-tree-select'); return sel ? sel.innerText.trim() : '' })()")) || ''
+    check('新建层级默认带入所选上级（树形下拉）', parentVal.length > 0 && !/请选择上级/.test(parentVal), parentVal)
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
+    await sleep(500)
+
     // 新建层级弹窗：上级 + 名称 + 类型（类型来自字典），且无面积/年份/编码
     await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新建'); b&&b.click() })()")
     await sleep(900)

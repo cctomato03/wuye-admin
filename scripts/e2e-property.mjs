@@ -295,17 +295,41 @@ async function main() {
   const summary1 = await api('GET', `/api/v1/property/spaces/summary?communityId=${communityId}`, undefined, token)
   check('基础信息概览（楼栋/房屋/面积）', summary1.code === 0 && summary1.data.houses > 0 && summary1.data.buildings >= 1, JSON.stringify(summary1.data))
 
-  // 模板导入（住宅/别墅/商铺/车位 五种示例）
-  const tpl = await fetch(BASE + '/api/v1/property/structures/import-template', { headers: { Authorization: `Bearer ${token}` } })
+  // 房屋地址导入：模板三列（编码/地址/面积），自动补齐层级
+  const tpl = await fetch(BASE + `/api/v1/property/structures/import-template?communityId=${communityId}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  })
   const tplBuf = await tpl.arrayBuffer()
-  check('导入模板可下载', tpl.ok && tplBuf.byteLength > 1000, String(tplBuf.byteLength))
-  const fd = new FormData()
-  fd.append('file', new Blob([tplBuf]), '小区基础信息导入模板.xlsx')
-  const imported = await (await fetch(BASE + `/api/v1/property/structures/import?communityId=${communityId}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })).json()
-  check('导入模板（住宅/别墅/商铺/办公）成功', imported.code === 0 && imported.data?.success >= 5, JSON.stringify(imported.data?.errors || imported.data))
+  check('导入模板可下载（三列）', tpl.ok && tplBuf.byteLength > 500, String(tplBuf.byteLength))
+  const uploadSpaceTemplate = async (cid) => {
+    const fd = new FormData()
+    fd.append('file', new Blob([tplBuf]), '小区基础信息导入模板.xlsx')
+    return (
+      await fetch(BASE + `/api/v1/property/structures/import?communityId=${cid}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd
+      })
+    ).json()
+  }
+  const imported = await uploadSpaceTemplate(communityId)
+  check('按房屋地址导入成功（自动补齐层级）', imported.code === 0 && imported.data?.success >= 3, JSON.stringify(imported.data?.errors || imported.data))
 
-  const summary2 = await api('GET', `/api/v1/property/spaces/summary?communityId=${communityId}`, undefined, token)
-  check('导入后按用途统计（商业/办公）', summary2.code === 0 && (summary2.data.byUsage?.commercial ?? 0) >= 1 && (summary2.data.byUsage?.office ?? 0) >= 1, JSON.stringify(summary2.data.byUsage || {}))
+  const treeAfterImport = await api('GET', `/api/v1/property/nodes/tree?communityId=${communityId}`, undefined, token)
+  const nodeNames = (treeAfterImport.data || []).map((n) => n.name)
+  check('导入后生成层级：1栋/4单元/1楼', ['1栋', '4单元', '1楼'].every((n) => nodeNames.includes(n)), nodeNames.join(','))
+
+  const importedHouses = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&keyword=`, undefined, token)
+  check('导入的房屋已挂载并带地址全称', (importedHouses.data?.list || []).some((h) => String(h.fullName).includes('1栋4单元1楼1号')), String(importedHouses.data?.total))
+
+  const dupImport = await uploadSpaceTemplate(communityId)
+  check('重复导入逐行报编码已存在', dupImport.code === 0 && dupImport.data?.success === 0 && dupImport.data?.failed >= 3 && /已存在/.test(JSON.stringify(dupImport.data?.errors)), JSON.stringify(dupImport.data?.errors || {}).slice(0, 80))
+
+  // 地址与目标小区不匹配 → 全部失败且提示应以前缀开头
+  const otherCom = await api('POST', '/api/v1/property/communities', { tenantId, code: 'IMP' + suffix, name: '导入校验小区' + suffix, address: '某省某市某区某路1号' }, token)
+  let mismatch = { code: 0, data: {} }
+  if (otherCom.code === 0) mismatch = await uploadSpaceTemplate(otherCom.data?.id)
+  check('地址与小区不匹配的数据被明确拒绝', otherCom.code === 0 && mismatch.code === 0 && mismatch.data?.failed >= 3 && /不匹配/.test(JSON.stringify(mismatch.data?.errors)), JSON.stringify(mismatch.data?.errors || {}).slice(0, 80))
 
   const exportRes = await fetch(BASE + `/api/v1/property/spaces/export?communityId=${communityId}`, { headers: { Authorization: `Bearer ${token}` } })
   const exportBuf = await exportRes.arrayBuffer()
