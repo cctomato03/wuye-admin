@@ -197,7 +197,8 @@ func (s *Service) CreateNode(ctx context.Context, req *NodeReq, p *principal.Inf
 		return 0, err
 	}
 	// 地址 = 上级地址 + 名称；小区下一级 = 小区地址 + 名称
-	baseAddr := communityBaseAddress(com)
+	// 小区下一级地址 = 小区地址 + 小区名称
+	baseAddr := communityBaseAddress(com) + com.Name
 	if parent != nil {
 		baseAddr = parent.FullAddress
 		if baseAddr == "" {
@@ -271,7 +272,7 @@ func (s *Service) UpdateNode(ctx context.Context, nodeID uint64, req *NodeReq, p
 	}
 	var com entity.Community
 	_ = s.Repo.DB.WithContext(ctx).Where("id = ?", n.CommunityID).First(&com).Error
-	baseAddr := communityBaseAddress(&com)
+	baseAddr := communityBaseAddress(&com) + com.Name
 	oldPath := n.Path
 	newLevel := 1
 	newPath := fmt.Sprintf("0,%d", n.ID)
@@ -707,7 +708,7 @@ func (s *Service) buildHouse(ctx context.Context, node *entity.StructureNode, co
 		}
 	}
 	var tenantID, communityID, nodeID uint64
-	baseAddr := communityBaseAddress(com)
+	baseAddr := communityBaseAddress(com) + com.Name
 	if node != nil {
 		tenantID, communityID, nodeID = node.TenantID, node.CommunityID, node.ID
 		if node.FullAddress != "" {

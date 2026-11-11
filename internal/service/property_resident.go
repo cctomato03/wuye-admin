@@ -899,7 +899,11 @@ func (s *Service) AddResidentFace(ctx context.Context, residentID uint64, req *F
 		FileID:      req.FileID.Uint64(),
 		FileURL:     req.FileURL,
 		Status:      1,
-		IsPrimary:   req.IsPrimary,
+		IsPrimary:   true, // 住户人脸唯一，重新上传即覆盖
+	}
+	// 人脸唯一：先清空该住户已有的人脸记录，再写入新的一张
+	if err := s.Repo.DB.WithContext(ctx).Where("resident_id = ?", r.ID).Delete(&entity.ResidentFace{}).Error; err != nil {
+		return 0, errs.ErrDB.WithErr(err)
 	}
 	if req.IsPrimary {
 		_ = s.Repo.DB.WithContext(ctx).Model(&entity.ResidentFace{}).

@@ -49,7 +49,7 @@
           </ElCol>
           <ElCol :span="12">
             <ElFormItem label="所在房屋">
-              <HouseCascader v-model="form.houseId" :usage-type="2" placeholder="按层级选择商业房屋" />
+              <HouseCascader v-model="form.houseId" placeholder="按层级选择房屋" />
             </ElFormItem>
           </ElCol>
           <ElCol :span="12">

@@ -373,9 +373,9 @@ export function fetchLookupResident(params: { idType?: number; idNo: string }) {
 }
 
 export function fetchCreateResident(data: Record<string, any>) {
-  return request.post<{ residentId: string; relationId: string; reused: boolean }>({
+  return request.post<{ residentId: string; relationId?: string; reused?: boolean }>({
     url: '/api/v1/property/residents',
-    data,
+    params: data,
     successMessage: '住户登记成功',
     showSuccessMessage: true
   })

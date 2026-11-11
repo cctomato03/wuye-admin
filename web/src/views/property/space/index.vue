@@ -193,7 +193,7 @@
             :props="{ label: 'name', value: 'id', children: 'children' }"
             check-strictly
             filterable
-            default-expand-all
+            :default-expand-all="false"
             class="w-full"
             placeholder="选择上级层级（默认小区为顶级）"
           />
@@ -220,10 +220,17 @@
         <ElRow :gutter="12">
           <ElCol :span="8">
             <ElFormItem label="所属层级" prop="nodeId">
-              <ElSelect v-model="houseForm.nodeId" filterable class="w-full" placeholder="小区或任意层级">
-                <ElOption label="小区（直接挂载）" value="0" />
-                <ElOption v-for="n in nodeOptions" :key="n.id" :label="n.name" :value="n.id" />
-              </ElSelect>
+              <ElTreeSelect
+                v-model="houseForm.nodeId"
+                :data="nodeTreeOptions"
+                :props="{ label: 'name', value: 'id', children: 'children' }"
+                check-strictly
+                filterable
+                clearable
+                :default-expand-all="false"
+                class="w-full"
+                placeholder="选择所属层级（可直接选小区）"
+              />
             </ElFormItem>
           </ElCol>
           <ElCol :span="8"><ElFormItem label="房屋编码" prop="code"><ElInput v-model.trim="houseForm.code" maxlength="64" /></ElFormItem></ElCol>
@@ -357,6 +364,40 @@
   const treeKeyword = ref('')
   const nodeOptions = ref<Property.Option[]>([])
   const allNodes = ref<Property.StructureNodeItem[]>([])
+
+  // 层级树（根为"小区（顶级）"），用于上级层级/房屋所属层级的下拉（默认全部折叠）
+  const buildSelectTree = (excludeId?: string) => {
+    const excluded = new Set<string>()
+    if (excludeId) {
+      excluded.add(excludeId)
+      let changed = true
+      while (changed) {
+        changed = false
+        allNodes.value.forEach((n) => {
+          if (n.parentId && excluded.has(n.parentId) && !excluded.has(n.id)) {
+            excluded.add(n.id)
+            changed = true
+          }
+        })
+      }
+    }
+    const list = allNodes.value.filter((n) => !excluded.has(n.id))
+    const byParent = new Map<string, any[]>()
+    list.forEach((n) => {
+      const key = n.parentId && n.parentId !== '0' ? n.parentId : '0'
+      const arr = byParent.get(key) || []
+      arr.push({ id: n.id, name: n.name, children: [] as any[] })
+      byParent.set(key, arr)
+    })
+    const build = (parent: string): any[] => {
+      const arr = byParent.get(parent) || []
+      arr.forEach((item) => (item.children = build(item.id)))
+      return arr
+    }
+    return build('0')
+  }
+  const nodeTreeOptions = computed(() => [{ id: '0', name: '小区（顶级）', children: buildSelectTree() }])
+  const parentTree = computed(() => [{ id: '0', name: '小区（顶级）', children: buildSelectTree(editingNode.value?.id) }])
   const communityCard = ref<Property.CommunityCard | null>(null)
   const nodeCard = ref<Property.NodeCard | null>(null)
   const houseCard = ref<Property.HouseCard | null>(null)
@@ -382,25 +423,7 @@
 
   const nodeForm = reactive<Record<string, any>>({ parentId: '0', name: '', nodeType: undefined })
 
-  // 上级层级选择：树形展示（顶层为"小区（顶级）"）
-  const parentTree = computed<any[]>(() => {
-    const roots: any[] = []
-    const byParent = new Map<string, any[]>()
-    allNodes.value.forEach((n) => {
-      const item = { id: n.id, name: n.name, children: [] as any[] }
-      const key = String(n.parentId || '0')
-      const arr = byParent.get(key) || []
-      arr.push(item)
-      byParent.set(key, arr)
-    })
-    const build = (parentId: string): any[] => {
-      const list = byParent.get(parentId) || []
-      list.forEach((item) => (item.children = build(item.id)))
-      return list
-    }
-    roots.push(...build('0'))
-    return [{ id: '0', name: '小区（顶级）', children: roots }]
-  })
+
   const houseForm = reactive<Record<string, any>>({
     nodeId: '0',
     code: '',

@@ -361,6 +361,50 @@ const { proc, dir, page } = await launch()
       check(`页面渲染：${item.path}`, item.expect.test(text), text.slice(0, 60).replace(/\n/g, ' '))
     }
 
+    // 单位管理：所在房屋级联可以选到房屋（不只到层级）
+    await cdp.send('Page.navigate', { url: `${BASE}/#/property/site/merchant` })
+    await sleep(2600)
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>/登记单位|新增/.test(x.innerText)); b&&b.click() })()")
+    await sleep(900)
+    const cascPick = await cdp.eval(`JSON.stringify((() => {
+      const d = document.querySelector('.el-dialog')
+      const cas = d && d.querySelector('.el-cascader')
+      if (!cas) return { ok: false, reason: 'no-cascader' }
+      cas.querySelector('.el-input__wrapper')?.click()
+      return { ok: true }
+    })())`)
+    await sleep(700)
+    let leafLabel = ''
+    for (let lv = 0; lv < 6 && !leafLabel; lv++) {
+      const res = await cdp.eval(`(() => {
+        const panels = [...document.querySelectorAll('.el-cascader-panel .el-cascader-menu')]
+        const last = panels[panels.length - 1]
+        if (!last) return ''
+        const nodes = [...last.querySelectorAll('.el-cascader-node')]
+        const leaf = nodes.find((n) => !n.querySelector('.el-icon-arrow-right'))
+        if (leaf) {
+          const t = (leaf.innerText || '').trim()
+          leaf.click()
+          return t
+        }
+        nodes[0] && nodes[0].click()
+        return ''
+      })()`)
+      if (res) leafLabel = String(res)
+      await sleep(700)
+    }
+    const pickedHouse = (await cdp.eval("(() => { const c=document.querySelector('.el-dialog .el-cascader'); if(!c) return ''; const inp=c.querySelector('input.el-input__inner') || c.querySelector('input'); return (inp && inp.value) || c.innerText.trim(); })()")) || ''
+    const cascInfo = JSON.parse(cascPick || '{}')
+    check('单位管理可按层级选到具体房屋', cascInfo.ok && leafLabel.length > 0, leafLabel || pickedHouse || JSON.stringify(cascInfo))
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
+    await sleep(400)
+
+    // 车辆管理已移除车位管理
+    await cdp.send('Page.navigate', { url: `${BASE}/#/property/site/vehicle` })
+    await sleep(2400)
+    const vehicleText = (await cdp.eval('document.body.innerText')) || ''
+    check('车辆管理不再有车位管理入口', !/新增车位|车位管理/.test(vehicleText), vehicleText.slice(0, 60).replace(/\n/g, '/'))
+
     // 住户登记弹窗：房屋使用层级级联，身份/关系字段宽度正常
     await cdp.send('Page.navigate', { url: `${BASE}/#/property/people/resident` })
     await sleep(2600)
@@ -376,6 +420,13 @@ const { proc, dir, page } = await launch()
     const rd = JSON.parse(residentDlg || '{}')
     check('住户登记房屋选择为层级级联', rd.has && rd.cascader, JSON.stringify(rd))
     check('身份/关系选择框宽度足够', Array.isArray(rd.widths) && rd.widths.filter((w) => w >= 150).length >= 2, JSON.stringify(rd.widths))
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.includes('添加房屋')); b&&b.click() })()")
+    await sleep(500)
+    const cascCount = await cdp.eval("document.querySelectorAll('.el-dialog .el-cascader').length")
+    check('住户可添加多套房屋关系', Number(cascCount) >= 2, String(cascCount))
+    const faceUi = await cdp.eval("(() => { const d=document.querySelector('.el-dialog'); if(!d) return ''; const txt=d.innerText; return JSON.stringify({ title: /人脸照片/.test(txt), btn: !!([...d.querySelectorAll('button')].find(b=>/上传人脸|重新上传/.test(b.innerText))) }) })()")
+    const fu = JSON.parse(faceUi || '{}')
+    check('登记住户可上传人脸照片', !!fu.title && !!fu.btn, faceUi)
     await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
     await sleep(400)
 
@@ -444,13 +495,36 @@ const { proc, dir, page } = await launch()
     await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-message-box button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
     await sleep(400)
 
-    // 已选中层级时，新建表单的"上级层级"应默认带入该层级（树形下拉）
+    // 新建层级：上级层级为可折叠树形下拉（默认折叠，可选中任一节点）
     await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新建'); b&&b.click() })()")
-    await sleep(900)
-    const parentVal = (await cdp.eval("(() => { const d=document.querySelector('.el-dialog'); if(!d) return ''; const sel=d.querySelector('.el-select, .el-tree-select'); return sel ? sel.innerText.trim() : '' })()")) || ''
-    check('新建层级默认带入所选上级（树形下拉）', parentVal.length > 0 && !/请选择上级/.test(parentVal), parentVal)
+    await sleep(1200)
+    await cdp.eval("(() => { const d=document.querySelector('.el-dialog'); const w=d&&d.querySelector('.el-select .el-select__wrapper, .el-select .el-input__wrapper'); w&&w.click() })()")
+    await sleep(700)
+    const treeInfo = await cdp.eval("JSON.stringify({ tree: !!document.querySelector('.el-select-dropdown .el-tree'), nodes: document.querySelectorAll('.el-select-dropdown .el-tree-node').length })")
+    const ti = JSON.parse(treeInfo || '{}')
+    check('新建层级上级为可折叠树形下拉', !!ti.tree, treeInfo)
+    check('上级层级默认折叠（只显示小区根节点）', Number(ti.nodes) === 1, String(ti.nodes))
+    await cdp.eval("(() => { const i=document.querySelector('.el-select-dropdown .el-tree-node__expand-icon'); i&&i.click() })()")
+    await sleep(600)
+    const afterExpand = await cdp.eval("document.querySelectorAll('.el-select-dropdown .el-tree-node').length")
+    check('展开后显示下级层级', Number(afterExpand) > 1, String(afterExpand))
     await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
     await sleep(500)
+
+    // 房屋弹窗：所属层级同样为可折叠树形下拉
+    await cdp.eval(`(() => {
+      const rows = [...document.querySelectorAll('.el-tree-node__children > .el-tree-node > .el-tree-node__content')]
+      rows[0] && rows[0].click()
+    })()`)
+    await sleep(900)
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新增房屋'); b&&b.click() })()")
+    await sleep(900)
+    await cdp.eval("(() => { const d=document.querySelector('.el-dialog'); const w=d&&d.querySelector('.el-select .el-select__wrapper, .el-select .el-input__wrapper'); w&&w.click() })()")
+    await sleep(600)
+    const houseTree = await cdp.eval("!!document.querySelector('.el-select-dropdown .el-tree')")
+    check('新建房屋所属层级为可折叠树形下拉', !!houseTree)
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
+    await sleep(400)
 
     // 新建层级弹窗：上级 + 名称 + 类型（类型来自字典），且无面积/年份/编码
     await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新建'); b&&b.click() })()")

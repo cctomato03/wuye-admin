@@ -99,38 +99,54 @@
           </ElCol>
         </ElRow>
 
-        <ElDivider content-position="left">房屋关系</ElDivider>
-        <ElRow :gutter="12">
-          <ElCol :span="24">
-            <ElFormItem label="房屋">
-              <HouseCascader v-model="form.houseId" :disabled="!!editing" placeholder="按层级选择房屋" />
-            </ElFormItem>
-          </ElCol>
-          <ElCol :span="12">
-            <ElFormItem label="身份">
-              <ElSelect v-model="form.relRole" class="w-full" style="min-width: 180px" :disabled="!!editing">
+        <ElDivider content-position="left">人脸照片（每人仅一张，重新上传会覆盖）</ElDivider>
+        <div class="mb-2 flex items-center gap-3">
+          <img v-if="facePreview" :src="facePreview" class="h-24 w-20 rounded border border-g-200 object-cover" />
+          <div v-else class="flex h-24 w-20 items-center justify-center rounded border border-dashed border-g-300 text-xs text-g-400">
+            未上传
+          </div>
+          <div class="flex flex-col gap-2">
+            <ElButton v-auth="'property:resident:face'" @click="pickFace">{{ facePreview ? '重新上传' : '上传人脸' }}</ElButton>
+            <ElButton v-if="facePreview" type="danger" plain @click="clearFace">移除</ElButton>
+          </div>
+          <span class="text-xs text-g-500">支持 jpg/png，每人只保留一张，重复上传会覆盖</span>
+        </div>
+
+        <ElDivider content-position="left">房屋关系（可多套，支持自住与租住并存）</ElDivider>
+        <div v-for="(r, idx) in relations" :key="r.key" class="mb-2 rounded border border-g-200 p-2">
+          <ElRow :gutter="8">
+            <ElCol :span="8">
+              <div class="mb-1 text-xs text-g-500">房屋</div>
+              <HouseCascader v-model="r.houseId" :disabled="!!r.id" placeholder="按层级选择房屋" />
+            </ElCol>
+            <ElCol :span="4">
+              <div class="mb-1 text-xs text-g-500">身份</div>
+              <ElSelect v-model="r.relRole" class="w-full" :disabled="!!r.id">
                 <ElOption label="业主" :value="1" />
                 <ElOption label="家人" :value="2" />
                 <ElOption label="租户" :value="3" />
               </ElSelect>
-            </ElFormItem>
-          </ElCol>
-          <ElCol :span="12">
-            <ElFormItem label="与业主关系">
-              <ElInput v-model.trim="form.relation" placeholder="本人/配偶…" maxlength="32" style="min-width: 180px" :disabled="!!editing" />
-            </ElFormItem>
-          </ElCol>
-          <ElCol :span="12">
-            <ElFormItem label="开始日期">
-              <ElDatePicker v-model="form.startDate" type="date" value-format="YYYY-MM-DD" class="!w-full" :disabled="!!editing" />
-            </ElFormItem>
-          </ElCol>
-          <ElCol :span="12">
-            <ElFormItem :label="form.relRole === 3 ? '到期日期（必填）' : '到期日期'">
-              <ElDatePicker v-model="form.endDate" type="date" value-format="YYYY-MM-DD" class="!w-full" :disabled="!!editing" />
-            </ElFormItem>
-          </ElCol>
-        </ElRow>
+            </ElCol>
+            <ElCol :span="4">
+              <div class="mb-1 text-xs text-g-500">与业主关系</div>
+              <ElInput v-model.trim="r.relation" placeholder="本人/配偶…" maxlength="32" :disabled="!!r.id" />
+            </ElCol>
+            <ElCol :span="4">
+              <div class="mb-1 text-xs text-g-500">开始日期</div>
+              <ElDatePicker v-model="r.startDate" type="date" value-format="YYYY-MM-DD" class="!w-full" :disabled="!!r.id" />
+            </ElCol>
+            <ElCol :span="4">
+              <div class="mb-1 text-xs text-g-500">{{ r.relRole === 3 ? '到期日期（必填）' : '到期日期' }}</div>
+              <ElDatePicker v-model="r.endDate" type="date" value-format="YYYY-MM-DD" class="!w-full" :disabled="!!r.id" />
+            </ElCol>
+            <ElCol :span="24" class="mt-1 text-right">
+              <ElButton link type="danger" :disabled="!r.id && relations.length === 1" @click="removeRelation(idx)">
+                删除该房屋关系
+              </ElButton>
+            </ElCol>
+          </ElRow>
+        </div>
+        <ElButton class="mb-2" @click="addRelation">+ 添加房屋</ElButton>
       </ElForm>
       <template #footer>
         <ElButton @click="dialogVisible = false">取消</ElButton>
@@ -173,7 +189,7 @@
           </ElTableColumn>
         </ElTable>
 
-        <ElDivider content-position="left">人脸照片</ElDivider>
+        <ElDivider content-position="left">人脸照片（每人仅一张，重新上传会覆盖）</ElDivider>
         <div class="flex flex-wrap gap-2">
           <div v-for="f in detail.faces || []" :key="f.id" class="relative">
             <img :src="f.fileUrl" class="h-24 w-20 rounded object-cover" />
@@ -250,6 +266,65 @@
     startDate: '',
     endDate: ''
   })
+
+  interface RelRow {
+    key: string
+    id?: string
+    houseId: string
+    relRole: number
+    relation: string
+    startDate: string
+    endDate: string
+    houseName?: string
+  }
+  const relations = ref<RelRow[]>([])
+  // 人脸：每人仅一张（新建时先上传文件，保存住户后再落库）
+  const facePreview = ref('')
+  const faceFile = ref<{ fileId: string; url: string } | null>(null)
+  const existingFaceId = ref('')
+  const faceCleared = ref(false)
+  const pickFace = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = async () => {
+      const f = input.files?.[0]
+      if (!f) return
+      const uploaded: any = await uploadFile<{ url: string; id?: string }>('/api/v1/files/upload', f)
+      faceFile.value = { fileId: String(uploaded?.id || ''), url: uploaded?.url || '' }
+      facePreview.value = uploaded?.url || ''
+      faceCleared.value = false
+    }
+    input.click()
+  }
+  const clearFace = () => {
+    facePreview.value = ''
+    faceFile.value = null
+    faceCleared.value = true
+  }
+  let relSeq = 0
+  const newRelation = (): RelRow => ({
+    key: 'r' + ++relSeq,
+    houseId: '',
+    relRole: 1,
+    relation: '',
+    startDate: '',
+    endDate: ''
+  })
+  const addRelation = () => relations.value.push(newRelation())
+  const removeRelation = async (idx: number) => {
+    const row = relations.value[idx]
+    if (row.id) {
+      try {
+        await ElMessageBox.confirm('确定解除该住户与这套房屋的关系吗？', '解除确认', { type: 'warning' })
+      } catch {
+        return
+      }
+      await fetchUnbindResidentHouse(row.id)
+    }
+    relations.value.splice(idx, 1)
+    if (relations.value.length === 0) relations.value.push(newRelation())
+  }
 
   const rules: FormRules = {
     idNo: [{ required: true, message: '请输入证件号码', trigger: 'blur' }],
@@ -361,6 +436,11 @@
       startDate: '',
       endDate: ''
     })
+    relations.value = [newRelation()]
+    facePreview.value = ''
+    faceFile.value = null
+    existingFaceId.value = ''
+    faceCleared.value = false
     dialogVisible.value = true
   }
 
@@ -389,13 +469,41 @@
   const handleSubmit = async () => {
     const valid = await formRef.value?.validate().catch(() => false)
     if (!valid) return
-    if (form.relRole === 3 && !form.endDate) return ElMessage.warning('租户必须填写到期日期')
+    const pending = relations.value.filter((r) => !r.id)
+    for (const r of pending) {
+      if (!r.houseId) return ElMessage.warning('请为每条房屋关系选择房屋')
+      if (r.relRole === 3 && !r.endDate) return ElMessage.warning('租户必须填写到期日期')
+    }
     submitting.value = true
     try {
+      const base = { ...form, communityId: currentId.value }
+      let residentId = editing.value?.id as string | undefined
       if (editing.value) {
-        await fetchUpdateResident(editing.value.id, { ...form })
+        await fetchUpdateResident(editing.value.id, base)
       } else {
-        await fetchCreateResident({ ...form, communityId: currentId.value })
+        const res: any = await fetchCreateResident(base)
+        residentId = res?.residentId || res?.id || res
+      }
+      if (residentId && faceFile.value?.url) {
+        await fetchAddResidentFace(residentId, {
+          communityId: currentId.value,
+          fileId: faceFile.value.fileId || '0',
+          fileUrl: faceFile.value.url,
+          isPrimary: true
+        })
+      } else if (residentId && faceCleared.value && existingFaceId.value) {
+        await fetchDeleteResidentFace(existingFaceId.value)
+      }
+      for (const r of pending) {
+        await fetchBindResidentHouse({
+          residentId,
+          communityId: currentId.value,
+          houseId: r.houseId,
+          relRole: r.relRole,
+          relation: r.relation,
+          startDate: r.startDate,
+          endDate: r.endDate
+        })
       }
       dialogVisible.value = false
       refreshData()
@@ -430,6 +538,23 @@
         startDate: '',
         endDate: ''
       })
+      const active = (res.houses || []).filter((h: any) => h.status === 1)
+      relations.value = active.map((h: any) => ({
+        key: 'e' + h.id,
+        id: h.id,
+        houseId: h.houseId,
+        relRole: h.relRole,
+        relation: h.relation || '',
+        startDate: h.startDate?.slice(0, 10) || '',
+        endDate: h.endDate?.slice(0, 10) || '',
+        houseName: h.houseName
+      }))
+      if (relations.value.length === 0) relations.value = [newRelation()]
+      const f0 = (res.faces || [])[0]
+      existingFaceId.value = f0?.id || ''
+      facePreview.value = f0?.fileUrl || ''
+      faceFile.value = null
+      faceCleared.value = false
       dialogVisible.value = true
       return
     }

@@ -321,6 +321,20 @@ async function main() {
 
   const importedHouses = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&keyword=`, undefined, token)
   check('导入的房屋已挂载并带地址全称', (importedHouses.data?.list || []).some((h) => String(h.fullName).includes('1栋4单元1楼1号')), String(importedHouses.data?.total))
+  const impCom = await api('GET', `/api/v1/property/communities/${communityId}`, undefined, token)
+  const impBase = String(impCom.data?.address || '') + String(impCom.data?.name || '')
+  const impNode = (treeAfterImport.data || []).find((n) => n.name === '1栋')
+  check(
+    '导入生成的层级地址包含小区地址+小区名称',
+    !!impNode && String(impNode.fullAddress || '').startsWith(impBase),
+    String(impNode?.fullAddress)
+  )
+  const impHouse = (importedHouses.data?.list || []).find((h) => String(h.fullName).includes('1栋4单元1楼1号'))
+  check(
+    '导入生成的房屋全称包含小区地址+小区名称',
+    !!impHouse && String(impHouse.fullName || '').startsWith(impBase),
+    String(impHouse?.fullName)
+  )
 
   const housesBeforeDup = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=1`, undefined, token)
   const cascader = await api('GET', `/api/v1/property/houses/cascader?communityId=${communityId}`, undefined, token)
@@ -442,6 +456,13 @@ async function main() {
   check('层级地址自动生成（小区地址+名称）', !!leafRow && String(leafRow.fullAddress || '').includes('2栋' + suffix), String(leafRow?.fullAddress))
   check('层级无编码输入也可用（自动生成）', !!leafRow && String(leafRow.code || '').length > 0, String(leafRow?.code))
   check('层级类型名回显', leafRow?.typeName === '楼栋', String(leafRow?.typeName))
+  const comDetail = await api('GET', `/api/v1/property/communities/${communityId}`, undefined, token)
+  const comBase = String(comDetail.data?.address || '') + String(comDetail.data?.name || '')
+  check(
+    '层级地址包含小区地址+小区名称',
+    !!leafRow && comBase.length > 0 && String(leafRow.fullAddress || '').startsWith(comBase),
+    String(leafRow?.fullAddress)
+  )
 
   const nodeCard2 = await api('GET', `/api/v1/property/nodes/${newLeaf.data?.id}/card`, undefined, token)
   check('层级卡片（名称/地址/范围/房屋数/住户/设备）', nodeCard2.code === 0 && nodeCard2.data.typeName === '楼栋' && !!nodeCard2.data.address && Array.isArray(nodeCard2.data.childNames) && Array.isArray(nodeCard2.data.devices), JSON.stringify(nodeCard2.data).slice(0, 120))
@@ -958,6 +979,38 @@ async function main() {
       )
       check('不能把别家公司的角色分配给用户', alienRole.code !== 0, alienRole.message)
     }
+  }
+
+  // ---------- 13.2 住户多房屋关系与人脸唯一 ----------
+  console.log('\n[13.2] 住户多房屋关系与人脸唯一')
+  const multiHouseRes = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=10`, undefined, token)
+  const twoHouses = (multiHouseRes.data?.list || []).slice(0, 2)
+  if (twoHouses.length >= 2) {
+    const resident = await api('POST', '/api/v1/property/residents', {
+      communityId,
+      idType: 1,
+      idNo: 'MULTI' + suffix,
+      name: '多房住户' + suffix,
+      phone: '13900000000'
+    }, token)
+    const residentId = resident.data?.residentId
+    check('住户登记成功（可无房屋先建档）', resident.code === 0 && !!residentId, resident.message)
+    const b1 = await api('POST', '/api/v1/property/residents/bind', { residentId, communityId, houseId: twoHouses[0].id, relRole: 1, startDate: '2024-01-01' }, token)
+    const b2 = await api('POST', '/api/v1/property/residents/bind', { residentId, communityId, houseId: twoHouses[1].id, relRole: 3, startDate: '2024-01-01', endDate: '2026-12-31' }, token)
+    check('同一住户可绑定多套房屋', b1.code === 0 && b2.code === 0, b1.message + '/' + b2.message)
+    const rels = await api('GET', `/api/v1/property/residents/${residentId}`, undefined, token)
+    check('住户房屋关系返回 2 条', rels.code === 0 && (rels.data?.houses || []).filter((r) => r.status === 1).length === 2, String((rels.data?.houses || []).length))
+    const relToRemove = (rels.data?.houses || []).find((r) => r.houseId === twoHouses[0].id && r.status === 1)
+    if (relToRemove) {
+      const del = await api('PUT', `/api/v1/property/residents/relations/${relToRemove.id}/unbind`, undefined, token)
+      check('可删除其中一条房屋关系', del.code === 0, del.message)
+      const rels2 = await api('GET', `/api/v1/property/residents/${residentId}`, undefined, token)
+      check('删除后仅剩 1 条有效关系', (rels2.data?.houses || []).filter((r) => r.status === 1).length === 1, String((rels2.data?.houses || []).filter((r) => r.status === 1).length))
+    }
+    const f1 = await api('POST', `/api/v1/property/residents/${residentId}/faces`, { communityId, fileId: '1', fileUrl: '/static/test1.jpg', isPrimary: true }, token)
+    const f2 = await api('POST', `/api/v1/property/residents/${residentId}/faces`, { communityId, fileId: '2', fileUrl: '/static/test2.jpg', isPrimary: true }, token)
+    const detailF = await api('GET', `/api/v1/property/residents/${residentId}`, undefined, token)
+    check('住户人脸唯一（重复上传覆盖）', f1.code === 0 && f2.code === 0 && (detailF.data?.faces || []).length === 1, String((detailF.data?.faces || []).length))
   }
 
   // ---------- 14. 数据隔离（跨租户越权） ----------

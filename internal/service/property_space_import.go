@@ -332,7 +332,8 @@ func (s *Service) ImportStructures(ctx context.Context, communityID uint64, r io
 			}
 			level := 1
 			path := fmt.Sprintf("0,%d", n.ID)
-			baseAddr := communityBaseAddress(com)
+			// 小区下一级地址 = 小区地址 + 小区名称
+			baseAddr := communityBaseAddress(com) + com.Name
 			if parent != nil {
 				level = parent.LevelNo + 1
 				path = fmt.Sprintf("%s,%d", parent.Path, n.ID)

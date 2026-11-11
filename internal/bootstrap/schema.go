@@ -128,28 +128,22 @@ type nodeRow struct {
 	FullAddress string
 }
 
-// EnsureNodeAddresses 幂等回填层级地址：full_address = 上级地址 + 名称，
-// 顶级 = 小区地址 + 名称。迁移只做数据规范化，地址回填放在这里，
-// 这样"迁移执行到一半失败"或历史数据缺失时都能自愈。
+// EnsureNodeAddresses 幂等回填/校正层级地址与房屋全称。
+// 规则：层级地址 = 小区地址 + 小区名称 + 各级名称；房屋全称 = 所属节点地址 + 房号。
 func EnsureNodeAddresses(db *gorm.DB) error {
 	exists, err := hasTable(db, "pm_structure_node")
 	if err != nil || !exists {
 		return err
 	}
-	var pending int64
-	if err := db.Raw("SELECT COUNT(*) FROM pm_structure_node WHERE deleted = 0 AND (full_address = '' OR full_address IS NULL)").Scan(&pending).Error; err != nil {
-		return err
-	}
-	if pending == 0 {
-		return nil
-	}
-	// 小区基础地址
 	var communities []struct {
-		ID                       uint64
-		Address                  string
-		Province, City, District string
+		ID       uint64
+		Name     string
+		Address  string
+		Province string
+		City     string
+		District string
 	}
-	if err := db.Raw("SELECT id, address, province, city, district FROM pm_community WHERE deleted = 0").Scan(&communities).Error; err != nil {
+	if err := db.Raw("SELECT id, name, address, province, city, district FROM pm_community WHERE deleted = 0").Scan(&communities).Error; err != nil {
 		return err
 	}
 	base := make(map[uint64]string, len(communities))
@@ -158,7 +152,7 @@ func EnsureNodeAddresses(db *gorm.DB) error {
 		if addr == "" {
 			addr = c.Province + c.City + c.District
 		}
-		base[c.ID] = addr
+		base[c.ID] = addr + c.Name
 	}
 	var nodes []nodeRow
 	if err := db.Raw("SELECT id, community_id, parent_id, name, level_no, full_address FROM pm_structure_node WHERE deleted = 0 ORDER BY level_no ASC, id ASC").Scan(&nodes).Error; err != nil {
@@ -178,6 +172,35 @@ func EnsureNodeAddresses(db *gorm.DB) error {
 			continue
 		}
 		if err := db.Exec("UPDATE pm_structure_node SET full_address = ? WHERE id = ?", addr, n.ID).Error; err != nil {
+			return err
+		}
+	}
+	// 房屋全称校正
+	var houses []struct {
+		ID          uint64
+		CommunityID uint64
+		NodeID      uint64
+		HouseNo     string
+		Code        string
+		FullName    string
+	}
+	if err := db.Raw("SELECT id, community_id, node_id, house_no, code, full_name FROM pm_house WHERE deleted = 0").Scan(&houses).Error; err != nil {
+		return err
+	}
+	for _, h := range houses {
+		prefix := base[h.CommunityID]
+		if v, ok := addrByID[h.NodeID]; ok && v != "" {
+			prefix = v
+		}
+		no := h.HouseNo
+		if no == "" {
+			no = h.Code
+		}
+		want := prefix + no
+		if h.FullName == want {
+			continue
+		}
+		if err := db.Exec("UPDATE pm_house SET full_name = ? WHERE id = ?", want, h.ID).Error; err != nil {
 			return err
 		}
 	}
