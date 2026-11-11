@@ -2,10 +2,12 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"strconv"
 
 	"web-basic/internal/principal"
 	"web-basic/internal/service"
 	"web-basic/pkg/errs"
+	"web-basic/pkg/jsonx"
 	"web-basic/pkg/response"
 )
 
@@ -281,6 +283,43 @@ func (h *Handler) ExportSpaceHouses(c *gin.Context) {
 		return
 	}
 	writeExcel(c, data, name)
+}
+
+// HouseCascader 房屋级联树（层级 + 房屋）。
+func (h *Handler) HouseCascader(c *gin.Context) {
+	cid := queryID(c, "communityId")
+	usageType := 0
+	if v := c.Query("usageType"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			usageType = n
+		}
+	}
+	tree, err := h.Svc.HouseCascaderTree(c.Request.Context(), cid, usageType, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, tree)
+}
+
+// ClearSpace 清空小区层级与房屋（导入出错后的整体重置）。
+func (h *Handler) ClearSpace(c *gin.Context) {
+	// communityId 既支持查询参数，也支持 JSON 请求体（前端 POST 会把 params 放进 body）
+	cid := queryID(c, "communityId")
+	if cid == 0 {
+		var body struct {
+			CommunityID jsonx.Uint64 `json:"communityId"`
+		}
+		if err := c.ShouldBindJSON(&body); err == nil && body.CommunityID.Uint64() != 0 {
+			cid = body.CommunityID.Uint64()
+		}
+	}
+	stats, err := h.Svc.ClearCommunitySpace(c.Request.Context(), cid, principal.Must(c))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OkData(c, stats)
 }
 
 // StructureImportTemplate 楼宇结构导入模板。

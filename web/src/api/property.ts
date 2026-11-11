@@ -1009,6 +1009,24 @@ export function fetchCommunityCard(communityId: string) {
   })
 }
 
+/** 房屋级联树（小区层级 + 房屋），供业务页面选房 */
+export function fetchHouseCascader(communityId: string, usageType?: number) {
+  return request.get<Property.CascaderNode[]>({
+    url: '/api/v1/property/houses/cascader',
+    params: { communityId, usageType }
+  })
+}
+
+/** 清空小区层级与房屋（导入出错后的整体重置） */
+export function fetchClearSpace(communityId: string) {
+  return request.post<{ houses: number; nodes: number }>({
+    // POST 的 params 会被封装层当成 body，这里显式放到 query 上
+    url: `/api/v1/property/spaces/clear?communityId=${communityId}`,
+    successMessage: '已清空层级与房屋',
+    showSuccessMessage: true
+  })
+}
+
 /** 小区基础信息概览（楼栋/单元/楼层/房屋/面积） */
 
 export function fetchSpaceSummary(communityId: string) {

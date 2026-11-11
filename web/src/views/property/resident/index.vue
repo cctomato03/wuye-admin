@@ -36,7 +36,7 @@
     </ElCard>
 
     <!-- 登记/编辑住户 -->
-    <ElDialog v-model="dialogVisible" :title="editing ? '编辑住户' : '登记住户'" width="760px" align-center destroy-on-close>
+    <ElDialog v-model="dialogVisible" :title="editing ? '编辑住户' : '登记住户'" width="900px" align-center destroy-on-close>
       <ElForm ref="formRef" :model="form" :rules="rules" label-width="110px">
         <ElAlert
           v-if="lookupTip"
@@ -101,35 +101,23 @@
 
         <ElDivider content-position="left">房屋关系</ElDivider>
         <ElRow :gutter="12">
-          <ElCol :span="12">
+          <ElCol :span="24">
             <ElFormItem label="房屋">
-              <ElSelect
-                v-model="form.houseId"
-                filterable
-                remote
-                :remote-method="searchHouses"
-                :loading="houseLoading"
-                placeholder="输入房号/编码搜索"
-                class="w-full"
-                clearable
-                :disabled="!!editing"
-              >
-                <ElOption v-for="h in houseOptions" :key="h.id" :label="`${h.fullName}（${h.code}）`" :value="h.id" />
-              </ElSelect>
+              <HouseCascader v-model="form.houseId" :disabled="!!editing" placeholder="按层级选择房屋" />
             </ElFormItem>
           </ElCol>
-          <ElCol :span="6">
+          <ElCol :span="12">
             <ElFormItem label="身份">
-              <ElSelect v-model="form.relRole" class="w-full" :disabled="!!editing">
+              <ElSelect v-model="form.relRole" class="w-full" style="min-width: 180px" :disabled="!!editing">
                 <ElOption label="业主" :value="1" />
                 <ElOption label="家人" :value="2" />
                 <ElOption label="租户" :value="3" />
               </ElSelect>
             </ElFormItem>
           </ElCol>
-          <ElCol :span="6">
+          <ElCol :span="12">
             <ElFormItem label="与业主关系">
-              <ElInput v-model.trim="form.relation" placeholder="本人/配偶…" maxlength="32" :disabled="!!editing" />
+              <ElInput v-model.trim="form.relation" placeholder="本人/配偶…" maxlength="32" style="min-width: 180px" :disabled="!!editing" />
             </ElFormItem>
           </ElCol>
           <ElCol :span="12">
@@ -207,6 +195,7 @@
 </template>
 
 <script setup lang="ts">
+  import HouseCascader from '../components/house-cascader.vue'
   import { ElMessage, ElMessageBox, ElTag, type FormInstance, type FormRules } from 'element-plus'
   import CommunitySelector from '../components/community-selector.vue'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
@@ -227,8 +216,7 @@
     fetchRenewResidentHouse,
     fetchRestoreResidentHouse,
     fetchAddResidentFace,
-    fetchDeleteResidentFace,
-    fetchHousePage
+    fetchDeleteResidentFace
   } from '@/api/property'
 
   defineOptions({ name: 'PropertyResident' })
@@ -245,7 +233,6 @@
   const submitting = ref(false)
   const formRef = ref<FormInstance>()
   const lookupTip = ref<{ type: 'success' | 'info'; text: string } | null>(null)
-  const houseOptions = ref<Property.House[]>([])
   const houseLoading = ref(false)
 
   const form = reactive<Record<string, any>>({
@@ -353,16 +340,7 @@
     handleSearch()
   }
 
-  const searchHouses = async (kw: string) => {
-    if (!currentId.value) return
-    houseLoading.value = true
-    try {
-      const res = await fetchHousePage({ communityId: currentId.value, keyword: kw, current: 1, size: 20 })
-      houseOptions.value = res.records as any
-    } finally {
-      houseLoading.value = false
-    }
-  }
+
 
   const openDialog = () => {
     editing.value = null
@@ -383,7 +361,6 @@
       startDate: '',
       endDate: ''
     })
-    searchHouses('')
     dialogVisible.value = true
   }
 

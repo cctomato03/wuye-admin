@@ -361,6 +361,24 @@ const { proc, dir, page } = await launch()
       check(`页面渲染：${item.path}`, item.expect.test(text), text.slice(0, 60).replace(/\n/g, ' '))
     }
 
+    // 住户登记弹窗：房屋使用层级级联，身份/关系字段宽度正常
+    await cdp.send('Page.navigate', { url: `${BASE}/#/property/people/resident` })
+    await sleep(2600)
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='登记住户'); b&&b.click() })()")
+    await sleep(900)
+    const residentDlg = await cdp.eval(`JSON.stringify((() => {
+      const d = document.querySelector('.el-dialog')
+      if (!d) return { has: false }
+      const cas = d.querySelector('.el-cascader')
+      const selects = [...d.querySelectorAll('.el-select')].map((s) => Math.round(s.getBoundingClientRect().width))
+      return { has: true, cascader: !!cas, widths: selects }
+    })())`)
+    const rd = JSON.parse(residentDlg || '{}')
+    check('住户登记房屋选择为层级级联', rd.has && rd.cascader, JSON.stringify(rd))
+    check('身份/关系选择框宽度足够', Array.isArray(rd.widths) && rd.widths.filter((w) => w >= 150).length >= 2, JSON.stringify(rd.widths))
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
+    await sleep(400)
+
     // 组织与权限：平台管理员可见"物业公司"切换
     await cdp.send('Page.navigate', { url: `${BASE}/#/system/user` })
     await sleep(2800)
@@ -416,6 +434,15 @@ const { proc, dir, page } = await launch()
     // 顶部按钮只保留导入/下载模板
     const toolbarText = (await cdp.eval("[...document.querySelectorAll('.el-card')][0] ? [...document.querySelectorAll('.el-card')][0].querySelectorAll('button') && [...[...document.querySelectorAll('.el-card')][0].querySelectorAll('button')].map((b) => b.innerText.trim()).join('|') : ''")) || ''
     check('顶部仅保留导入与下载模板按钮', /导入 Excel/.test(toolbarText) && /下载模板/.test(toolbarText) && !/导出|房屋类型|批量生成/.test(toolbarText), toolbarText.slice(0, 120))
+
+    // 清空层级与房屋：按钮存在且二次确认
+    check('存在清空层级与房屋按钮', /清空层级与房屋/.test(toolbarText), toolbarText.slice(0, 120))
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.includes('清空层级与房屋')); b&&b.click() })()")
+    await sleep(700)
+    const confirmText = (await cdp.eval("document.querySelector('.el-message-box')?.innerText || ''")) || ''
+    check('清空前有二次确认提示', /不可恢复/.test(confirmText), confirmText.slice(0, 60).replace(/\n/g, '/'))
+    await cdp.eval("(() => { const b=[...document.querySelectorAll('.el-message-box button')].find(x=>x.innerText.trim()==='取消'); b&&b.click() })()")
+    await sleep(400)
 
     // 已选中层级时，新建表单的"上级层级"应默认带入该层级（树形下拉）
     await cdp.eval("(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='新建'); b&&b.click() })()")

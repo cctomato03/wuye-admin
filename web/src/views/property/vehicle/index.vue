@@ -73,9 +73,7 @@
           </ElCol>
           <ElCol :span="12">
             <ElFormItem label="关联房屋">
-              <ElSelect v-model="vehicleForm.houseId" filterable remote :remote-method="searchHouses" class="w-full" clearable placeholder="搜索房屋">
-                <ElOption v-for="h in houseOptions" :key="h.id" :label="h.fullName" :value="h.id" />
-              </ElSelect>
+              <HouseCascader v-model="vehicleForm.houseId" placeholder="按层级选择房屋" />
             </ElFormItem>
           </ElCol>
           <ElCol :span="12">
@@ -134,6 +132,7 @@
 </template>
 
 <script setup lang="ts">
+  import HouseCascader from '../components/house-cascader.vue'
   import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
   import CommunitySelector from '../components/community-selector.vue'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
@@ -148,8 +147,7 @@
     fetchParkingSpacePage,
     fetchCreateParkingSpace,
     fetchDeleteParkingSpace,
-    fetchVehicleLogPage,
-    fetchHousePage
+    fetchVehicleLogPage
   } from '@/api/property'
   import { formatTime } from '@/utils/web-basic'
 
@@ -162,7 +160,6 @@
   const vehicleVisible = ref(false)
   const spaceVisible = ref(false)
   const editingVehicle = ref<Property.Vehicle | null>(null)
-  const houseOptions = ref<Property.House[]>([])
   const spaceOptions = ref<Property.ParkingSpace[]>([])
 
   const vehicleForm = reactive<Record<string, any>>({
@@ -324,11 +321,7 @@
     const res = await fetchParkingSpacePage({ communityId: currentId.value, current: 1, size: 100 })
     spaceOptions.value = res.records as any
   }
-  const searchHouses = async (kw: string) => {
-    if (!currentId.value) return
-    const res = await fetchHousePage({ communityId: currentId.value, keyword: kw, current: 1, size: 20 })
-    houseOptions.value = res.records as any
-  }
+
 
   const openVehicleDialog = (row?: Property.Vehicle) => {
     editingVehicle.value = row || null
@@ -342,7 +335,6 @@
       validFrom: row?.validFrom?.slice(0, 10) || '',
       validTo: row?.validTo?.slice(0, 10) || ''
     })
-    searchHouses('')
     loadSpaceOptions()
     vehicleVisible.value = true
   }

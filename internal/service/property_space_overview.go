@@ -8,6 +8,7 @@ package service
 
 import (
 	"context"
+	"gorm.io/gorm"
 
 	"web-basic/internal/model/entity"
 	"web-basic/internal/principal"
@@ -334,3 +335,173 @@ func (s *Service) NodeChildren(ctx context.Context, communityID, nodeID uint64, 
 
 // BoolPtr 便捷布尔指针。
 func BoolPtr(v bool) *bool { return &v }
+
+// ClearCommunitySpace 清空小区下所有"层级 + 房屋"（逻辑删除），用于导入出错后的整体重置。
+//
+// 为避免误删业务数据，存在以下数据时会拒绝执行：
+// 在册住户关系、未结清账单、车辆、单位商铺、访客登记。
+func (s *Service) ClearCommunitySpace(ctx context.Context, communityID uint64, p *principal.Info) (map[string]int64, error) {
+	if err := s.MustCommunity(ctx, p, communityID); err != nil {
+		return nil, err
+	}
+	com, err := s.findCommunity(ctx, p, communityID)
+	if err != nil {
+		return nil, err
+	}
+	if com == nil {
+		return nil, errs.ErrNotFound
+	}
+	// 先统计房屋 ID 范围（含直接挂小区的）
+	var houseIDs []uint64
+	if err := s.Repo.DB.WithContext(ctx).Model(&entity.House{}).
+		Where("community_id = ?", communityID).Pluck("id", &houseIDs).Error; err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	if len(houseIDs) > 0 {
+		var residents int64
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.ResidentHouse{}).
+			Where("house_id IN ? AND status = 1", houseIDs).Count(&residents).Error
+		if residents > 0 {
+			return nil, errs.Invalid("该小区已有在册住户，不能清空层级与房屋，请先解绑住户")
+		}
+		var bills int64
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Bill{}).
+			Where("house_id IN ? AND status IN (1,2)", houseIDs).Count(&bills).Error
+		if bills > 0 {
+			return nil, errs.Invalid("该小区还有未结清账单，不能清空层级与房屋")
+		}
+		var vehicles int64
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Vehicle{}).
+			Where("house_id IN ?", houseIDs).Count(&vehicles).Error
+		if vehicles > 0 {
+			return nil, errs.Invalid("该小区还有车辆登记，不能清空层级与房屋")
+		}
+		var merchants int64
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Merchant{}).
+			Where("house_id IN ?", houseIDs).Count(&merchants).Error
+		if merchants > 0 {
+			return nil, errs.Invalid("该小区还有单位商铺，不能清空层级与房屋")
+		}
+		var visitors int64
+		_ = s.Repo.DB.WithContext(ctx).Model(&entity.Visitor{}).
+			Where("visit_house_id IN ?", houseIDs).Count(&visitors).Error
+		if visitors > 0 {
+			return nil, errs.Invalid("该小区还有访客登记，不能清空层级与房屋")
+		}
+	}
+	stats := map[string]int64{}
+	err = s.Repo.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 设备与层级解绑
+		_ = tx.Model(&entity.Device{}).Where("community_id = ? AND bind_node_id > 0", communityID).
+			Updates(map[string]any{"bind_node_id": 0, "bind_name": ""}).Error
+		// 逻辑删除房屋
+		h := tx.Where("community_id = ?", communityID).Delete(&entity.House{})
+		if h.Error != nil {
+			return h.Error
+		}
+		stats["houses"] = h.RowsAffected
+		// 逻辑删除层级
+		n := tx.Where("community_id = ?", communityID).Delete(&entity.StructureNode{})
+		if n.Error != nil {
+			return n.Error
+		}
+		stats["nodes"] = n.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	_ = s.Repo.DB.WithContext(ctx).Model(&entity.Community{}).Where("id = ?", communityID).
+		Updates(map[string]any{"building_count": 0, "house_count": 0}).Error
+	return stats, nil
+}
+
+// CascaderNode 房屋级联选择节点（层级 + 房屋叶子）。
+type CascaderNode struct {
+	Value    string          `json:"value"`
+	Label    string          `json:"label"`
+	IsHouse  bool            `json:"isHouse"`
+	Children []*CascaderNode `json:"children,omitempty"`
+}
+
+// HouseCascaderTree 返回"小区层级 + 房屋"的级联树，供单位/车辆/住户/访客等页面选房。
+// usageType>0 时只返回该用途的房屋（如单位管理只看商业房屋）。
+func (s *Service) HouseCascaderTree(ctx context.Context, communityID uint64, usageType int, p *principal.Info) ([]*CascaderNode, error) {
+	if err := s.MustCommunity(ctx, p, communityID); err != nil {
+		return nil, err
+	}
+	var nodes []entity.StructureNode
+	if err := s.Repo.DB.WithContext(ctx).Where("community_id = ?", communityID).
+		Order("level_no ASC, sort ASC, id ASC").Find(&nodes).Error; err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	hq := s.Repo.DB.WithContext(ctx).Model(&entity.House{}).Where("community_id = ?", communityID)
+	if usageType > 0 {
+		hq = hq.Where("usage_type = ?", usageType)
+	}
+	var houses []entity.House
+	if err := hq.Order("node_id ASC, house_no ASC").Limit(20000).Find(&houses).Error; err != nil {
+		return nil, errs.ErrDB.WithErr(err)
+	}
+	nodeByID := make(map[uint64]*CascaderNode, len(nodes))
+	childrenOf := make(map[uint64][]*CascaderNode, len(nodes))
+	for _, n := range nodes {
+		item := &CascaderNode{Value: "n-" + uintToStr(n.ID), Label: n.Name}
+		nodeByID[n.ID] = item
+		childrenOf[n.ParentID] = append(childrenOf[n.ParentID], item)
+	}
+	rootHouses := []*CascaderNode{}
+	for _, h := range houses {
+		label := h.HouseNo
+		if label == "" {
+			label = h.Code
+		}
+		leaf := &CascaderNode{Value: "h-" + uintToStr(h.ID), Label: label, IsHouse: true}
+		if h.NodeID == 0 || nodeByID[h.NodeID] == nil {
+			rootHouses = append(rootHouses, leaf)
+			continue
+		}
+		parent := nodeByID[h.NodeID]
+		parent.Children = append(parent.Children, leaf)
+	}
+	// 组装层级：子节点挂在父节点下
+	var build func(parentID uint64) []*CascaderNode
+	build = func(parentID uint64) []*CascaderNode {
+		list := childrenOf[parentID]
+		for _, item := range list {
+			nid := parseNumericSuffix(item.Value)
+			item.Children = append(item.Children, build(nid)...)
+		}
+		return list
+	}
+	roots := build(0)
+	roots = append(roots, rootHouses...)
+	return roots, nil
+}
+
+// uintToStr / parseNumericSuffix 级联 value 的轻量编解码。
+func uintToStr(v uint64) string {
+	if v == 0 {
+		return "0"
+	}
+	buf := [20]byte{}
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(buf[i:])
+}
+
+func parseNumericSuffix(v string) uint64 {
+	var out uint64
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c < '0' || c > '9' {
+			continue
+		}
+		out = out*10 + uint64(c-'0')
+	}
+	return out
+}

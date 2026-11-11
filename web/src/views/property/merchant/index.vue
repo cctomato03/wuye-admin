@@ -49,9 +49,7 @@
           </ElCol>
           <ElCol :span="12">
             <ElFormItem label="所在房屋">
-              <ElSelect v-model="form.houseId" filterable remote :remote-method="searchHouses" class="w-full" clearable placeholder="搜索商业房屋">
-                <ElOption v-for="h in houseOptions" :key="h.id" :label="`${h.fullName}（${h.code}）`" :value="h.id" />
-              </ElSelect>
+              <HouseCascader v-model="form.houseId" :usage-type="2" placeholder="按层级选择商业房屋" />
             </ElFormItem>
           </ElCol>
           <ElCol :span="12">
@@ -90,13 +88,14 @@
 </template>
 
 <script setup lang="ts">
+  import HouseCascader from '../components/house-cascader.vue'
   import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
   import CommunitySelector from '../components/community-selector.vue'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import type { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
   import { useTable } from '@/hooks/core/useTable'
   import { usePropertyCommunity } from '@/utils/property-community'
-  import { fetchMerchantPage, fetchCreateMerchant, fetchUpdateMerchant, fetchDeleteMerchant, fetchHousePage } from '@/api/property'
+  import { fetchMerchantPage, fetchCreateMerchant, fetchUpdateMerchant, fetchDeleteMerchant } from '@/api/property'
 
   defineOptions({ name: 'PropertyMerchant' })
 
@@ -105,7 +104,6 @@
   const dialogVisible = ref(false)
   const editing = ref<Property.Merchant | null>(null)
   const submitting = ref(false)
-  const houseOptions = ref<Property.House[]>([])
 
   const form = reactive<Record<string, any>>({
     name: '',
@@ -174,11 +172,7 @@
     getData()
   }
 
-  const searchHouses = async (kw: string) => {
-    if (!currentId.value) return
-    const res = await fetchHousePage({ communityId: currentId.value, keyword: kw, usageType: 2, current: 1, size: 20 })
-    houseOptions.value = res.records as any
-  }
+
 
   const openDialog = (row?: Property.Merchant) => {
     editing.value = row || null
@@ -194,7 +188,6 @@
       startDate: row?.startDate?.slice(0, 10) || '',
       endDate: row?.endDate?.slice(0, 10) || ''
     })
-    searchHouses('')
     dialogVisible.value = true
   }
 

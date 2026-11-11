@@ -176,6 +176,14 @@ declare namespace Property {
     status?: number
   }
 
+  /** 房屋级联节点 */
+  interface CascaderNode {
+    value: string
+    label: string
+    isHouse?: boolean
+    children?: CascaderNode[]
+  }
+
   /** 树懒加载节点 */
   interface TreeNodeChild {
     rowType: 'node' | 'house'

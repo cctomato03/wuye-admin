@@ -323,6 +323,30 @@ async function main() {
   check('导入的房屋已挂载并带地址全称', (importedHouses.data?.list || []).some((h) => String(h.fullName).includes('1栋4单元1楼1号')), String(importedHouses.data?.total))
 
   const housesBeforeDup = await api('GET', `/api/v1/property/structures/houses?communityId=${communityId}&page=1&pageSize=1`, undefined, token)
+  const cascader = await api('GET', `/api/v1/property/houses/cascader?communityId=${communityId}`, undefined, token)
+  const walkCascader = (list, acc = { nodes: 0, houses: 0, houseLabels: [] }) => {
+    ;(list || []).forEach((n) => {
+      if (n.isHouse) {
+        acc.houses++
+        acc.houseLabels.push(n.label)
+      } else {
+        acc.nodes++
+        walkCascader(n.children, acc)
+      }
+    })
+    return acc
+  }
+  const cascStats = walkCascader(cascader.data)
+  check(
+    '房屋级联树包含层级与房屋叶子(房号)',
+    cascader.code === 0 &&
+      cascStats.nodes >= 3 &&
+      cascStats.houses >= 3 &&
+      cascStats.houseLabels.every((l) => l && l.length > 0) &&
+      cascStats.houseLabels.some((l) => /号$/.test(l)),
+    JSON.stringify({ nodes: cascStats.nodes, houses: cascStats.houses, labels: cascStats.houseLabels.slice(0, 3) })
+  )
+
   const dupImport = await uploadSpaceTemplate(communityId)
   check(
     '重复导入整批拒绝（不写入任何数据）',
@@ -375,6 +399,34 @@ async function main() {
   const exportRes = await fetch(BASE + `/api/v1/property/spaces/export?communityId=${communityId}`, { headers: { Authorization: `Bearer ${token}` } })
   const exportBuf = await exportRes.arrayBuffer()
   check('基础信息可导出 Excel', exportRes.ok && exportBuf.byteLength > 1000, String(exportBuf.byteLength))
+
+  // ---------- 4.3 清空层级与房屋 ----------
+  console.log('\n[4.3] 清空层级与房屋（导入出错后的重置）')
+  const clearCom = await api('POST', '/api/v1/property/communities', { tenantId, code: 'CLR' + suffix, name: '清理测试小区' + suffix, address: '清理省清理市清理区清理路1号' }, token)
+  if (clearCom.code === 0) {
+    const cid = clearCom.data?.id
+    const tplClear = await fetch(BASE + `/api/v1/property/structures/import-template?communityId=${cid}`, { headers: { Authorization: `Bearer ${token}` } })
+    const bufClear = await tplClear.arrayBuffer()
+    const uClear = async () => {
+      const fd = new FormData()
+      fd.append('file', new Blob([bufClear]), 'c.xlsx')
+      return (await fetch(BASE + `/api/v1/property/structures/import?communityId=${cid}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })).json()
+    }
+    const impClear = await uClear()
+    check('清理前置：导入 3 套房屋', impClear.code === 0 && impClear.data?.success >= 3, JSON.stringify(impClear.data?.errors || impClear.data))
+    const housesClear = await api('GET', `/api/v1/property/structures/houses?communityId=${cid}&page=1&pageSize=10`, undefined, token)
+    const oneHouse = (housesClear.data?.list || [])[0]
+    const vehClear = await api('POST', '/api/v1/property/vehicles', { communityId: cid, plateNo: '清A' + suffix, plateColor: 1, vehicleType: 1, ownerType: 1, houseId: oneHouse?.id }, token)
+    const blockedClear = await api('POST', `/api/v1/property/spaces/clear?communityId=${cid}`, undefined, token)
+    check('有车辆登记时拒绝清空', blockedClear.code !== 0 && /车辆/.test(blockedClear.message), blockedClear.message)
+    if (vehClear.code === 0) await api('DELETE', `/api/v1/property/vehicles/${vehClear.data?.id}`, undefined, token)
+    const clearStats = await api('POST', '/api/v1/property/spaces/clear', { communityId: cid }, token)
+    check('清空层级与房屋成功', clearStats.code === 0 && (clearStats.data?.houses ?? 0) >= 3 && (clearStats.data?.nodes ?? 0) >= 3, JSON.stringify(clearStats.data))
+    const afterHouses = await api('GET', `/api/v1/property/structures/houses?communityId=${cid}&page=1&pageSize=10`, undefined, token)
+    const afterNodes = await api('GET', `/api/v1/property/nodes/tree?communityId=${cid}`, undefined, token)
+    const afterSum = await api('GET', `/api/v1/property/spaces/summary?communityId=${cid}`, undefined, token)
+    check('清空后房屋/层级/统计均为空', afterHouses.data?.total === 0 && (afterNodes.data || []).length === 0 && (afterSum.data?.buildings ?? -1) === 0, JSON.stringify({ houses: afterHouses.data?.total, nodes: (afterNodes.data || []).length, buildings: afterSum.data?.buildings }))
+  }
 
   // ---------- 4.2 信息卡片（层级/房屋/小区）与"直接挂小区"的房屋 ----------
   console.log('\n[4.2] 信息卡片与小区直挂房屋')

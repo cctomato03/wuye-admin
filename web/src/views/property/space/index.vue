@@ -23,6 +23,7 @@
         <ElButton type="primary" :disabled="!currentId" @click="openNodeDialog(null, defaultParentId())">新建</ElButton>
         <ElButton v-auth="'property:structure:import'" :loading="importing" :disabled="!currentId" @click="triggerImport">导入 Excel</ElButton>
         <ElButton text @click="downloadTemplate">下载模板</ElButton>
+        <ElButton type="danger" plain :loading="clearing" :disabled="!currentId" @click="clearSpace">清空层级与房屋</ElButton>
         <input ref="fileInputRef" type="file" accept=".xlsx,.xls" class="hidden" @change="handleImport" />
       </div>
     </ElCard>
@@ -330,6 +331,7 @@
     fetchDeleteNode,
     fetchHousePage,
     fetchCreateHouse,
+    fetchClearSpace,
     fetchUpdateHouse,
     fetchDeleteHouse,
     fetchGetHouseTypes,
@@ -365,6 +367,7 @@
   const houseTypes = ref<Property.HouseType[]>([])
   const loading = ref(false)
   const submitting = ref(false)
+  const clearing = ref(false)
   const importing = ref(false)
   const exporting = ref(false)
   const nodeDialog = ref(false)
@@ -639,6 +642,30 @@
   }
 
 
+
+  const clearSpace = async () => {
+    if (!currentId.value) return
+    try {
+      await ElMessageBox.confirm(
+        '将删除本小区下所有层级与房屋（含导入的数据），此操作不可恢复；如已有住户/账单/车辆/单位/访客数据会被拒绝。确定继续？',
+        '清空层级与房屋',
+        { type: 'warning', confirmButtonText: '确认清空', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    clearing.value = true
+    try {
+      await fetchClearSpace(currentId.value)
+      selected.value = null
+      nodeCard.value = null
+      houseCard.value = null
+      nodeHouses.value = []
+      await reload()
+    } finally {
+      clearing.value = false
+    }
+  }
 
   const triggerImport = () => fileInputRef.value?.click()
   const downloadTemplate = () =>

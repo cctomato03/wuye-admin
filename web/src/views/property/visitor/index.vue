@@ -44,9 +44,7 @@
           </ElCol>
           <ElCol :span="12">
             <ElFormItem label="受访房屋" prop="visitHouseId">
-              <ElSelect v-model="form.visitHouseId" filterable remote :remote-method="searchHouses" :loading="houseLoading" class="w-full" placeholder="搜索房屋">
-                <ElOption v-for="h in houseOptions" :key="h.id" :label="h.fullName" :value="h.id" />
-              </ElSelect>
+              <HouseCascader v-model="form.visitHouseId" placeholder="按层级选择受访房屋" />
             </ElFormItem>
           </ElCol>
           <ElCol :span="12">
@@ -90,13 +88,14 @@
 </template>
 
 <script setup lang="ts">
+  import HouseCascader from '../components/house-cascader.vue'
   import { ElMessage, ElMessageBox, ElTag, type FormInstance, type FormRules } from 'element-plus'
   import CommunitySelector from '../components/community-selector.vue'
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import type { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
   import { useTable } from '@/hooks/core/useTable'
   import { usePropertyCommunity } from '@/utils/property-community'
-  import { fetchVisitorPage, fetchCreateVisitor, fetchChangeVisitorStatus, fetchDeleteVisitor, fetchHousePage } from '@/api/property'
+  import { fetchVisitorPage, fetchCreateVisitor, fetchChangeVisitorStatus, fetchDeleteVisitor } from '@/api/property'
   import { formatTime } from '@/utils/web-basic'
 
   defineOptions({ name: 'PropertyVisitor' })
@@ -106,7 +105,6 @@
   const dialogVisible = ref(false)
   const submitting = ref(false)
   const formRef = ref<FormInstance>()
-  const houseOptions = ref<Property.House[]>([])
   const houseLoading = ref(false)
 
   const form = reactive<Record<string, any>>({
@@ -185,16 +183,7 @@
     getData()
   }
 
-  const searchHouses = async (kw: string) => {
-    if (!currentId.value) return
-    houseLoading.value = true
-    try {
-      const res = await fetchHousePage({ communityId: currentId.value, keyword: kw, current: 1, size: 20 })
-      houseOptions.value = res.records as any
-    } finally {
-      houseLoading.value = false
-    }
-  }
+
 
   const openDialog = () => {
     Object.assign(form, {
@@ -209,7 +198,6 @@
       peopleCount: 1,
       visitReason: ''
     })
-    searchHouses('')
     dialogVisible.value = true
   }
 
