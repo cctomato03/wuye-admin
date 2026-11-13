@@ -57,7 +57,15 @@ storage:
     secret_key: ""
     domain: ""
     private: false
-    sign_expire: 3600
+    sign_expire: 600
+    # 前端直传（浏览器直接传 OSS，应用服务器只签名+记账）
+    direct_upload: true
+    # 直传方式：post=表单直传（multipart，不触发 CORS 预检，默认）/ put=预签名 PUT
+    upload_mode: post
+    # 回执时向 OSS 校验对象是否存在（固定校验，此项保留兼容）
+    verify_exists: true
+    # 是否允许服务端中转上传（默认 false：开启直传后禁用，避免占用服务器带宽）
+    allow_server_upload: false
 
 log:
   level: info

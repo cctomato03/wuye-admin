@@ -47,7 +47,8 @@ type UploadTicketVO struct {
 	// ExpiresIn 签名有效期（秒）
 	ExpiresIn int `json:"expiresIn"`
 	// Storage 存储类型（oss）
-	Storage string `json:"storage"`
+	Storage    string            `json:"storage"`
+	FormFields map[string]string `json:"formFields,omitempty"`
 }
 
 // OSSRecordReq 直传完成回执入参。
@@ -127,15 +128,41 @@ func (s *Service) CreateUploadTicket(ctx context.Context, req *UploadTicketReq) 
 	objectKey := buildObjectKey(bizType, ext)
 	expire := time.Duration(defaultInt(s.Cfg.Storage.OSS.SignExpire, 900)) * time.Second
 
-	uploadURL, err := s.Storage.PresignPut(ctx, objectKey, expire, "")
-	if err != nil {
-		return nil, errs.ErrStorage.WithErr(err)
-	}
 	url, err := s.Storage.URL(ctx, objectKey, expire)
 	if err != nil {
 		return nil, errs.ErrStorage.WithErr(err)
 	}
+	// 默认使用表单直传（multipart/form-data，简单请求，不触发 CORS 预检）；
+	// 配置 storage.oss.upload_mode=put 时仍用预签名 PUT。
+	mode := strings.ToLower(strings.TrimSpace(s.Cfg.Storage.OSS.UploadMode))
+	if mode == "" {
+		mode = "post"
+	}
+	if mode == "post" {
+		if poster, ok := s.Storage.(interface {
+			PresignPost(ctx context.Context, objectKey string, expire time.Duration, maxSize int64) (string, map[string]string, error)
+		}); ok {
+			host, fields, err := poster.PresignPost(ctx, objectKey, expire, maxSize)
+			if err != nil {
+				return nil, errs.ErrStorage.WithErr(err)
+			}
+			return &UploadTicketVO{
+				ObjectKey:  objectKey,
+				UploadURL:  host,
+				Method:     "POST",
+				Headers:    map[string]string{},
+				FormFields: fields,
+				URL:        url,
+				ExpiresIn:  int(expire.Seconds()),
+				Storage:    s.Storage.Type(),
+			}, nil
+		}
+	}
 
+	uploadURL, err := s.Storage.PresignPut(ctx, objectKey, expire, "")
+	if err != nil {
+		return nil, errs.ErrStorage.WithErr(err)
+	}
 	return &UploadTicketVO{
 		ObjectKey: objectKey,
 		UploadURL: uploadURL,

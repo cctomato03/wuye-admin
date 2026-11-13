@@ -375,6 +375,10 @@ func (s *Service) DeleteTenant(ctx context.Context, tenantID uint64) error {
 
 // UploadFile 上传文件：大小 / 扩展名 / 内容类型三重校验 + SHA-256 记录。
 func (s *Service) UploadFile(ctx context.Context, fh *multipart.FileHeader, bizType string, p *principal.Info) (*entity.File, error) {
+	// OSS 直传模式默认关闭服务端中转，避免文件字节经应用服务器浪费带宽
+	if s.DirectUploadEnabled() && !s.Cfg.Storage.OSS.AllowServerUpload {
+		return nil, errs.Invalid("已启用 OSS 前端直传，服务端中转上传已关闭；如确需中转请配置 storage.oss.allow_server_upload=true")
+	}
 	maxSize := int64(s.Cfg.Upload.MaxSizeMB) * 1024 * 1024
 	if maxSize > 0 && fh.Size > maxSize {
 		return nil, errs.ErrFileTooLarge

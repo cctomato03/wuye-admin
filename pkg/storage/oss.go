@@ -2,7 +2,12 @@ package storage
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -24,9 +29,16 @@ func NewOSS(cfg config.OSSStore) (*OSS, error) {
 	if cfg.Endpoint == "" || cfg.Bucket == "" || cfg.AccessKey == "" || cfg.SecretKey == "" {
 		return nil, errors.New("OSS 配置不完整：endpoint / bucket / access_key / secret_key 均为必填")
 	}
-	client, err := oss.New(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey)
+	// 没写协议时默认 https：阿里云 SDK 对无协议 endpoint 会生成 http 预签名 URL，
+	// 在 https 站点里会被浏览器按"混合内容"拦截（表现为 PUT 没有请求体、随后回退服务端上传）。
+	endpoint := strings.TrimSpace(cfg.Endpoint)
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "https://" + endpoint
+	}
+	cfg.Endpoint = endpoint
+	client, err := oss.New(endpoint, cfg.AccessKey, cfg.SecretKey)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("OSS 初始化失败(endpoint=%s): %w", endpoint, err)
 	}
 	bucket, err := client.Bucket(cfg.Bucket)
 	if err != nil {
@@ -46,7 +58,7 @@ func (o *OSS) Put(ctx context.Context, objectKey string, body io.Reader, size in
 		opts = append(opts, oss.ContentType(contentType))
 	}
 	if err := o.bucket.PutObject(key, body, opts...); err != nil {
-		return "", err
+		return "", fmt.Errorf("OSS PutObject 失败(bucket=%s, key=%s): %w", o.cfg.Bucket, key, err)
 	}
 	return o.URL(ctx, key, 0)
 }
@@ -92,10 +104,65 @@ func (o *OSS) PresignPut(ctx context.Context, objectKey string, expire time.Dura
 	if contentType != "" {
 		opts = append(opts, oss.ContentType(contentType))
 	}
-	return o.bucket.SignURL(key, oss.HTTPPut, int64(expire.Seconds()), opts...)
+	u, err := o.bucket.SignURL(key, oss.HTTPPut, int64(expire.Seconds()), opts...)
+	if err != nil {
+		return "", fmt.Errorf("OSS 直传签名失败(bucket=%s, key=%s): %w", o.cfg.Bucket, key, err)
+	}
+	return u, nil
 }
 
 // Exists 判断对象是否存在（直传回执校验用）。
+// PresignPost 生成表单直传（PostObject）所需的 host 与字段。
+// 浏览器用 multipart/form-data POST 上传属于"简单请求"，不触发 CORS 预检；
+// 响应是否可读不影响上传结果，前端随后调 /files/oss-record，由服务端 HEAD 校验对象存在后落库。
+func (o *OSS) PresignPost(ctx context.Context, objectKey string, expire time.Duration, maxSize int64) (string, map[string]string, error) {
+	key := normalizeKey(objectKey)
+	if expire <= 0 {
+		expire = time.Duration(defaultInt(o.cfg.SignExpire, 900)) * time.Second
+	}
+	if maxSize <= 0 {
+		maxSize = 20 * 1024 * 1024
+	}
+	expiration := time.Now().Add(expire).UTC().Format("2006-01-02T15:04:05.000Z")
+	doc := map[string]any{
+		"expiration": expiration,
+		"conditions": []any{
+			map[string]string{"bucket": o.cfg.Bucket},
+			map[string]string{"key": key},
+			[]any{"content-length-range", 1, maxSize},
+			map[string]string{"success_action_status": "200"},
+		},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return "", nil, err
+	}
+	policy := base64.StdEncoding.EncodeToString(raw)
+	mac := hmac.New(sha1.New, []byte(o.cfg.SecretKey))
+	mac.Write([]byte(policy))
+	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	host := strings.TrimRight(o.cfg.Endpoint, "/")
+	scheme := "https://"
+	if strings.HasPrefix(host, "http://") {
+		scheme = "http://"
+	}
+	plainHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	if o.cfg.Domain != "" {
+		host = strings.TrimRight(o.cfg.Domain, "/")
+	} else {
+		host = scheme + o.cfg.Bucket + "." + plainHost
+	}
+	fields := map[string]string{
+		"key":                   key,
+		"policy":                policy,
+		"OSSAccessKeyId":        o.cfg.AccessKey,
+		"signature":             signature,
+		"success_action_status": "200",
+	}
+	return host, fields, nil
+}
+
 func (o *OSS) Exists(ctx context.Context, objectKey string) (bool, error) {
 	return o.bucket.IsObjectExist(normalizeKey(objectKey))
 }

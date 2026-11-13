@@ -194,6 +194,7 @@ declare namespace WebBasic {
     uploadUrl: string
     method: string
     headers: Record<string, string>
+    formFields?: Record<string, string>
     url: string
     expiresIn: number
     storage: string

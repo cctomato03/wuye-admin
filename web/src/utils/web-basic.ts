@@ -155,7 +155,14 @@ export async function downloadFile(
 }
 
 /** 带鉴权的文件上传（multipart/form-data，Excel 导入等） */
-export async function uploadFile<T = any>(path: string, file: File): Promise<T> {
+/**
+ * 业务导入专用：把文件 POST 给后端某个接口并返回接口的 JSON（如 Excel 导入结果）。
+ *
+ * ⚠️ 文件存储/图片上传请使用 `@/utils/upload` 的 `uploadFile(file, { bizType })`：
+ * 它会自动选择「OSS 前端直传」或「服务端中转」，并把文件登记进文件表。
+ * 这里的接口只适用于"后端必须读取文件内容"的场景（如 Excel 导入）。
+ */
+export async function uploadBusinessFile<T = any>(path: string, file: File): Promise<T> {
   const { apiUrl } = await import('@/utils/http')
   const { useUserStore } = await import('@/store/modules/user')
   const token = useUserStore().accessToken

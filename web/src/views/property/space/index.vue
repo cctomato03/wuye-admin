@@ -345,7 +345,7 @@
     fetchCreateHouseType,
     fetchDeleteHouseType
   } from '@/api/property'
-  import { downloadFile, uploadFile } from '@/utils/web-basic'
+  import { downloadFile, uploadBusinessFile } from '@/utils/web-basic'
 
   defineOptions({ name: 'PropertySpace' })
 
@@ -700,7 +700,7 @@
     if (!file || !currentId.value) return
     importing.value = true
     try {
-      const res = await uploadFile<{ total: number; success: number; failed: number; errors: string[]; aborted?: boolean }>(
+      const res = await uploadBusinessFile<{ total: number; success: number; failed: number; errors: string[]; aborted?: boolean }>(
         `/api/v1/property/structures/import?communityId=${currentId.value}`,
         file
       )

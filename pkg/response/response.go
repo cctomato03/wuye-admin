@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 
+	"web-basic/internal/logger"
 	"web-basic/internal/metrics"
 	"web-basic/pkg/errs"
 )
@@ -74,6 +75,10 @@ func Fail(c *gin.Context, err error) {
 	_ = c.Error(err)
 	var ae *errs.AppError
 	if errors.As(err, &ae) {
+		if ae.Code >= 50000 {
+			// 5xx 只给前端通用提示，详细原因写日志（含底层 OSS/DB 错误）
+			logger.S().Errorw("request failed", "code", ae.Code, "path", c.FullPath(), "err", fmt.Sprint(err))
+		}
 		FailCode(c, ae.Code, ae.Msg)
 		return
 	}

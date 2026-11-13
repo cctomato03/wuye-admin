@@ -217,7 +217,7 @@
   import ArtButtonMore from '@/components/core/forms/art-button-more/index.vue'
   import type { ButtonMoreItem } from '@/components/core/forms/art-button-more/index.vue'
   import { useTable } from '@/hooks/core/useTable'
-  import { uploadFile } from '@/utils/web-basic'
+  import { uploadFile } from '@/utils/upload'
   import { usePropertyCommunity } from '@/utils/property-community'
   import {
     fetchResidentPage,
@@ -290,7 +290,7 @@
     input.onchange = async () => {
       const f = input.files?.[0]
       if (!f) return
-      const uploaded: any = await uploadFile<{ url: string; id?: string }>('/api/v1/files/upload', f)
+      const uploaded: any = await uploadFile(f, { bizType: 'resident-face' })
       faceFile.value = { fileId: String(uploaded?.id || ''), url: uploaded?.url || '' }
       facePreview.value = uploaded?.url || ''
       faceCleared.value = false
@@ -613,10 +613,11 @@
     input.onchange = async () => {
       const file = input.files?.[0]
       if (!file) return
-      // 统一走 uploadFile：本地磁盘中转 / OSS 直传自动选择
-      const uploaded = await uploadFile<{ url: string }>('/api/v1/files/upload', file)
+      // 统一走存储 helper：OSS 直传可用时直传，否则自动回退服务端中转
+      const uploaded: any = await uploadFile(file, { bizType: 'resident-face' })
       await fetchAddResidentFace(detail.value!.id, {
         communityId: currentId.value,
+        fileId: String(uploaded?.id || '0'),
         fileUrl: uploaded.url,
         isPrimary: !detail.value!.faces?.length
       })

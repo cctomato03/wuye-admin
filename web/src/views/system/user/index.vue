@@ -92,7 +92,7 @@
   import UserSearch from './modules/user-search.vue'
   import UserDialog from './modules/user-dialog.vue'
   import { ElTag, ElMessageBox, ElMessage, ElSwitch } from 'element-plus'
-  import { formatTime, downloadFile, uploadFile } from '@/utils/web-basic'
+  import { formatTime, downloadFile, uploadBusinessFile } from '@/utils/web-basic'
   import { checkPassword } from '@/utils/password'
   import defaultAvatar from '@/assets/images/user/avatar.webp'
 
@@ -148,7 +148,7 @@
     if (!file) return
     importing.value = true
     try {
-      const res = await uploadFile<{ total: number; success: number; failed: number; errors: string[] }>(
+      const res = await uploadBusinessFile<{ total: number; success: number; failed: number; errors: string[] }>(
         '/api/v1/system/users/import',
         file
       )

@@ -132,6 +132,7 @@ docs/                  操作手册 / 开发手册 / 系统设计
 ```bash
 # 静态检查
 go vet ./... && gofmt -l internal pkg
+node scripts/check-upload-usage.mjs   # 上传规范：统一走 @/utils/upload
 cd web && npx vue-tsc --noEmit && pnpm build
 
 # 接口 + 浏览器端到端（需服务已启动）
@@ -148,7 +149,10 @@ node scripts/e2e-property-ui.mjs http://127.0.0.1:8090 admin Admin@123456  # 浏
 
 - **数据库**：生产建议 `auto_migrate: false`，由发布流程显式执行迁移；`deploy/` 提供 Dockerfile 与 nginx 示例。
 - **密钥**：务必覆盖 `APP__JWT__SECRET`；首次启动设置 `APP__APP__ADMIN_PASSWORD`。
-- **文件存储**：默认本地 `storage/`（`/static` 前缀）；可切 OSS（`storage.type=oss` + AK/SK）。
+- **文件存储**：默认本地 `storage/`（`/static` 前缀）；可切 OSS（`storage.type=oss` + AK/SK + `direct_upload: true`）。
+  OSS 需配置 Bucket **CORS**（允许站点域名 `PUT/GET/HEAD`、Header `Content-Type`），endpoint 建议写全 `https://`（未写时程序默认 https，避免 https 站点混合内容拦截）。
+  直传开启后前端**只走 OSS 直传**（失败即报错，不回退服务端中转）；服务端 `/files/upload` 默认同时关闭，可用 `storage.oss.allow_server_upload: true` 放行。
+  默认 `storage.oss.upload_mode: post`（表单直传，multipart 属于简单请求，**不触发 CORS 预检**）；如需改成预签名 PUT 可设 `upload_mode: put`（必须同时配好 Bucket CORS）。
 - **行政区划**：首次启动异步导入；也可 `POST /api/v1/property/districts/sync` 手动触发（带分布式锁）。
 - **前端托管**：默认托管 `web/dist`；如需单文件分发，把产物拷到 `internal/webui/dist` 后以 `-tags embed` 构建。
 - **日志与监控**：日志在 `logs/`（按大小切割）；`/metrics` 暴露 Prometheus 指标，`/healthz` 用于探活。

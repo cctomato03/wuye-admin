@@ -114,6 +114,10 @@ type OSSStore struct {
 	DirectUpload bool `mapstructure:"direct_upload"`
 	// VerifyExists 直传回执时是否向 OSS 校验对象真实存在（多一次 HEAD 请求，默认开启）。
 	VerifyExists bool `mapstructure:"verify_exists"`
+	// AllowServerUpload 是否允许服务端中转上传（默认 false：开启直传后禁用，避免占用应用服务器带宽）。
+	AllowServerUpload bool `mapstructure:"allow_server_upload"`
+	// UploadMode 直传方式：post=表单直传（multipart，不触发 CORS 预检，默认）/ put=预签名 PUT
+	UploadMode string `mapstructure:"upload_mode"`
 }
 
 type Log struct {

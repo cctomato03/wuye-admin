@@ -144,7 +144,7 @@
     fetchGetDeviceSummary,
     fetchNodeOptions
   } from '@/api/property'
-  import { downloadFile, uploadFile } from '@/utils/web-basic'
+  import { downloadFile, uploadBusinessFile } from '@/utils/web-basic'
 
   defineOptions({ name: 'PropertyDevice' })
 
@@ -313,7 +313,7 @@
     if (!file || !currentId.value) return
     importing.value = true
     try {
-      const res = await uploadFile<{ total: number; success: number; failed: number; errors: string[] }>(
+      const res = await uploadBusinessFile<{ total: number; success: number; failed: number; errors: string[] }>(
         `/api/v1/property/devices/import?communityId=${currentId.value}`,
         file
       )
