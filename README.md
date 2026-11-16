@@ -145,6 +145,39 @@ node scripts/e2e-property-ui.mjs http://127.0.0.1:8090 admin Admin@123456  # 浏
 
 ---
 
+## 六、发布与镜像（GitHub Actions）
+
+仓库自带两条工作流（`.github/workflows/`）：
+
+| 工作流 | 触发 | 作用 |
+| --- | --- | --- |
+| `ci.yml` | push main/master、PR、手动 | 后端 `gofmt/go vet/go build/go test`；前端 `pnpm install/build` + 上传规范检查 |
+| `release-docker.yml` | **发布 Release（published）**、手动触发 | 构建 `zhsq/wuye-admin:<tag>`，`docker save` 打包为 `wuye-admin-<tag>-linux-amd64.tar.gz` 并上传到该 Release 附件（含 `.sha256`） |
+
+### 发布步骤
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+# 然后在 GitHub 上该 tag 创建并 Publish Release（Release 名称随意）
+```
+Release 发布后会自动跑 Action，产物在 Release 页面「Assets」里：
+- `wuye-admin-1.2.0-linux-amd64.tar.gz`
+- `wuye-admin-1.2.0-linux-amd64.tar.gz.sha256`
+
+### 使用下载的镜像包
+```bash
+sha256sum -c wuye-admin-1.2.0-linux-amd64.tar.gz.sha256
+gunzip -c wuye-admin-1.2.0-linux-amd64.tar.gz | docker load
+docker images | grep zhsq/wuye-admin          # zhsq/wuye-admin  v1.2.0
+docker run -d --name wuye-admin -p 8080:8080 \
+  -v $PWD/configs:/app/configs \
+  -v $PWD/storage:/app/storage \
+  zhsq/wuye-admin:v1.2.0
+```
+> 镜像内已内嵌前端静态资源；数据库/Redis 等配置通过 `-v configs:/app/configs` 或 `APP__*` 环境变量覆盖。
+> 手动触发（workflow_dispatch）时不会写 Release，产物在对应 workflow 运行页的 Artifacts 中，保留 14 天。
+> 如需同时推送到 Docker Hub/GHCR，可在 `release-docker.yml` 末尾启用已注释的 login/push 步骤并配置 secrets。
+
 ## 五、部署要点
 
 - **数据库**：生产建议 `auto_migrate: false`，由发布流程显式执行迁移；`deploy/` 提供 Dockerfile 与 nginx 示例。
