@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite --open",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vite build && vue-tsc --noEmit",
     "serve": "vite preview",
     "lint": "eslint",
     "fix": "eslint --fix",
@@ -16,7 +16,9 @@
     "lint:stylelint": "stylelint  \"**/*.{css,scss,vue}\" --fix",
     "lint:lint-staged": "lint-staged",
     "commit": "git-cz",
-    "clean:dev": "tsx scripts/clean-dev.ts"
+    "clean:dev": "tsx scripts/clean-dev.ts",
+    "build:only": "vite build",
+    "type-check": "vue-tsc --noEmit"
   },
   "config": {
     "commitizen": {
@@ -116,5 +118,6 @@
     "vue-demi": "^0.14.9",
     "vue-img-cutter": "^3.0.5",
     "vue-tsc": "~2.1.6"
-  }
+  },
+  "packageManager": "pnpm@11.25.0"
 }

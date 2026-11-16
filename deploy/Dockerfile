@@ -26,7 +26,7 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 WORKDIR /src/web
 # 依赖清单先拷贝，利用 layer 缓存（pnpm-workspace.yaml 里声明了允许执行安装脚本的依赖）
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
-RUN corepack enable && pnpm config set registry ${NPM_REGISTRY} && pnpm install --frozen-lockfile
+RUN npm i -g pnpm@11 && pnpm config set registry ${NPM_REGISTRY} && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
